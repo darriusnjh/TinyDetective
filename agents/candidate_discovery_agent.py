@@ -7,6 +7,7 @@ from typing import Any
 
 from adapters.comparison_site_adapter import TinyFishComparisonSiteAdapter
 from models.schemas import CandidateProduct, SourceProduct
+from services.tinyfish_client import TinyFishRunUpdateCallback
 
 
 class CandidateDiscoveryAgent:
@@ -19,6 +20,7 @@ class CandidateDiscoveryAgent:
         self,
         source_product: SourceProduct,
         comparison_sites: list[str],
+        on_update: TinyFishRunUpdateCallback | None = None,
         top_n: int = 3,
     ) -> tuple[list[CandidateProduct], list[dict[str, Any]]]:
         search_queries = self._build_search_queries(source_product)
@@ -33,6 +35,7 @@ class CandidateDiscoveryAgent:
                     source_product,
                     site,
                     search_query=search_query,
+                    on_update=on_update,
                     top_n=top_n,
                 )
                 for site, search_query in site_query_pairs

@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 from adapters.comparison_site_adapter import TinyFishComparisonSiteAdapter
 from models.schemas import CandidateProduct, ComparisonResult, SourceProduct
 from services.settings import settings
+from services.tinyfish_client import TinyFishRunUpdateCallback
 
 
 OFFICIAL_STORE_CONFIDENCE_THRESHOLD = 0.75
@@ -37,10 +38,12 @@ class ProductComparisonAgent:
         self,
         source_product: SourceProduct,
         candidate: CandidateProduct,
+        on_update: TinyFishRunUpdateCallback | None = None,
     ) -> tuple[ComparisonResult, dict[str, Any]]:
         candidate_full, raw_output = await self.adapter.fetch_candidate_product(
             str(candidate.product_url),
             candidate.marketplace,
+            on_update=on_update,
         )
         comparisons = {
             "brand": self._eq(source_product.brand, candidate_full.brand),

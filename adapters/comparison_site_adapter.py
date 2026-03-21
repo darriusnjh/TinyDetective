@@ -7,7 +7,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from models.schemas import CandidateProduct, SourceProduct
-from services.tinyfish_client import TinyFishClient, TinyFishRun
+from services.tinyfish_client import TinyFishClient, TinyFishRun, TinyFishRunUpdateCallback
 
 
 class TinyFishComparisonSiteAdapter:
@@ -21,6 +21,7 @@ class TinyFishComparisonSiteAdapter:
         source_product: SourceProduct,
         comparison_site: str,
         search_query: str,
+        on_update: TinyFishRunUpdateCallback | None = None,
         top_n: int = 3,
     ) -> tuple[list[CandidateProduct], dict[str, Any]]:
         marketplace = self._marketplace_name(comparison_site)
@@ -42,7 +43,7 @@ class TinyFishComparisonSiteAdapter:
             '"description":"","image_urls":[]}]} '
             "Only include real listing URLs found on this site. Do not fabricate listings."
         )
-        run = await self.client.run_json(comparison_site, goal)
+        run = await self.client.run_json(comparison_site, goal, on_update=on_update)
         result = self._coerce_result_object(run)
         candidates = [
             CandidateProduct.model_validate(
@@ -61,6 +62,7 @@ class TinyFishComparisonSiteAdapter:
         self,
         candidate_url: str,
         marketplace: str,
+        on_update: TinyFishRunUpdateCallback | None = None,
     ) -> tuple[CandidateProduct, dict[str, Any]]:
         goal = (
             "Visit this product listing page and extract structured product data for counterfeit research. "
@@ -69,7 +71,7 @@ class TinyFishComparisonSiteAdapter:
             '"material":"","model":"","sku":"","description":"","image_urls":[]} '
             "Use null for unknown scalar values and [] for unknown lists. Do not invent values."
         )
-        run = await self.client.run_json(candidate_url, goal)
+        run = await self.client.run_json(candidate_url, goal, on_update=on_update)
         result = self._coerce_result_object(run)
         result["product_url"] = candidate_url
         result["marketplace"] = marketplace
@@ -98,5 +100,9 @@ class TinyFishComparisonSiteAdapter:
             "tinyfish_run_id": run.run_id,
             "tinyfish_status": run.status,
             "tinyfish_result": run.result,
+            "tinyfish_elapsed_seconds": run.elapsed_seconds,
+            "tinyfish_delayed": run.delayed,
+            "tinyfish_last_heartbeat_at": run.last_heartbeat_at.isoformat() if run.last_heartbeat_at else None,
+            "tinyfish_last_progress_at": run.last_progress_at.isoformat() if run.last_progress_at else None,
             "search_query": search_query or "",
         }

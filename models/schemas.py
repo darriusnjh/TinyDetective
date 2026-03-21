@@ -18,6 +18,7 @@ def utc_now() -> datetime:
 class InvestigationStatus(str, Enum):
     queued = "queued"
     running = "running"
+    delayed = "delayed"
     completed = "completed"
     failed = "failed"
 
@@ -25,6 +26,7 @@ class InvestigationStatus(str, Enum):
 class TaskStatus(str, Enum):
     queued = "queued"
     running = "running"
+    delayed = "delayed"
     completed = "completed"
     failed = "failed"
 
@@ -98,6 +100,10 @@ class AgentTaskState(BaseModel):
     input_payload: dict[str, Any] = Field(default_factory=dict)
     output_payload: dict[str, Any] = Field(default_factory=dict)
     error: str | None = None
+    provider_run_id: str | None = None
+    provider_status: str | None = None
+    last_heartbeat_at: datetime | None = None
+    last_progress_at: datetime | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
 
