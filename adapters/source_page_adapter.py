@@ -1,0 +1,51 @@
+"""TinyFish-backed source page extraction adapter."""
+
+from __future__ import annotations
+
+import json
+from typing import Any
+
+from models.schemas import SourceProduct
+from services.tinyfish_client import TinyFishClient, TinyFishRun
+
+
+class TinyFishSourcePageAdapter:
+    """Extract source product details from an official product page using TinyFish."""
+
+    def __init__(self, client: TinyFishClient | None = None) -> None:
+        self.client = client or TinyFishClient()
+
+    async def extract_product(self, source_url: str) -> tuple[SourceProduct, dict[str, Any]]:
+        goal = (
+            "Visit this official product page and extract structured product data. "
+            "Return valid JSON only with this exact shape: "
+            '{"brand":"","product_name":"","category":"","subcategory":"","price":0,'
+            '"currency":"","color":"","size":"","material":"","model":"","sku":"",'
+            '"features":[],"description":"","image_urls":[],"extraction_confidence":0.0}. '
+            "Use null for unknown scalar values and [] for unknown lists. "
+            "Do not invent values that are not visible on the page."
+        )
+        run = await self.client.run_json(source_url, goal)
+        data = self._coerce_result_object(run)
+        data["source_url"] = source_url
+        return SourceProduct.model_validate(data), self._raw_output(run)
+
+    @staticmethod
+    def _coerce_result_object(run: TinyFishRun) -> dict[str, Any]:
+        result = run.result
+        if isinstance(result, dict):
+            return result
+        if isinstance(result, str):
+            try:
+                return json.loads(result)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"Source extraction was not valid JSON: {result}") from exc
+        raise ValueError(f"Unexpected TinyFish extraction result: {result!r}")
+
+    @staticmethod
+    def _raw_output(run: TinyFishRun) -> dict[str, Any]:
+        return {
+            "tinyfish_run_id": run.run_id,
+            "tinyfish_status": run.status,
+            "tinyfish_result": run.result,
+        }
