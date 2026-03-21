@@ -7,8 +7,9 @@ import asyncio
 from agents.evidence_agent import EvidenceAgent
 from agents.candidate_discovery_agent import CandidateDiscoveryAgent
 from agents.product_comparison_agent import ProductComparisonAgent
+from agents.ranking_agent import RankingAgent
 from agents.research_summary_agent import ResearchSummaryAgent
-from models.schemas import CandidateProduct, SourceProduct
+from models.schemas import CandidateProduct, ComparisonResult, SourceProduct
 
 
 class StubComparisonAdapter:
@@ -205,5 +206,71 @@ def test_candidate_discovery_agent_builds_semantic_brand_led_queries() -> None:
         assert len(raw_outputs) == len(queries)
         assert len(candidates) == len(queries)
         assert all(candidate.discovery_queries for candidate in candidates)
+
+    asyncio.run(run())
+
+
+def test_ranking_agent_returns_all_results_sorted_by_highest_risk() -> None:
+    async def run() -> None:
+        comparisons = [
+            ComparisonResult(
+                source_url="https://brand.example/products/alpha-case",
+                product_url="https://market.example/item/low-risk",
+                marketplace="Market",
+                match_score=0.9,
+                is_exact_match=True,
+                counterfeit_risk_score=0.2,
+                reason="low risk",
+                candidate_product=CandidateProduct(
+                    product_url="https://market.example/item/low-risk",
+                    marketplace="Market",
+                ),
+            ),
+            ComparisonResult(
+                source_url="https://brand.example/products/alpha-case",
+                product_url="https://market.example/item/high-risk",
+                marketplace="Market",
+                match_score=0.61,
+                is_exact_match=False,
+                counterfeit_risk_score=0.91,
+                reason="high risk",
+                candidate_product=CandidateProduct(
+                    product_url="https://market.example/item/high-risk",
+                    marketplace="Market",
+                ),
+            ),
+            ComparisonResult(
+                source_url="https://brand.example/products/alpha-case",
+                product_url="https://market.example/item/medium-risk",
+                marketplace="Market",
+                match_score=0.7,
+                is_exact_match=False,
+                counterfeit_risk_score=0.55,
+                reason="medium risk",
+                candidate_product=CandidateProduct(
+                    product_url="https://market.example/item/medium-risk",
+                    marketplace="Market",
+                ),
+            ),
+            ComparisonResult(
+                source_url="https://brand.example/products/alpha-case",
+                product_url="https://market.example/item/another-risk",
+                marketplace="Market",
+                match_score=0.52,
+                is_exact_match=False,
+                counterfeit_risk_score=0.44,
+                reason="another risk",
+                candidate_product=CandidateProduct(
+                    product_url="https://market.example/item/another-risk",
+                    marketplace="Market",
+                ),
+            ),
+        ]
+        ranked = await RankingAgent().run(comparisons)
+        assert len(ranked) == 4
+        assert str(ranked[0].product_url).endswith("high-risk")
+        assert str(ranked[1].product_url).endswith("medium-risk")
+        assert str(ranked[2].product_url).endswith("another-risk")
+        assert str(ranked[3].product_url).endswith("low-risk")
 
     asyncio.run(run())
