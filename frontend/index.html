@@ -20,8 +20,8 @@
         <p class="eyebrow">Counterfeit Research Console</p>
         <h1>TinyDetective</h1>
         <p class="lede">
-          Investigate product listings against official source URLs with a modular
-          multi-agent workflow inspired by MarqVision-style research ops.
+          Review suspicious marketplace listings against official product pages
+          with a live multi-agent workflow built for research ops.
         </p>
       </section>
 
@@ -29,58 +29,118 @@
         <div class="panel-header">
           <div>
             <p class="section-label">Inputs</p>
-            <h2>Launch Investigation</h2>
+            <h2>Start Investigation</h2>
           </div>
-          <div class="status-pill" id="status-pill">Idle</div>
+          <div class="status-pill" id="status-pill" aria-live="polite">Idle</div>
         </div>
 
         <form id="investigation-form">
           <p class="config-note" id="config-note"></p>
-          <label for="source-urls">Official source product URLs</label>
-          <textarea
-            id="source-urls"
-            placeholder="One URL per line&#10;https://www.casetify.com/product/impact-case-hello-kitty"
-          ></textarea>
+          <div class="field-block">
+            <label for="source-urls">Official product page URLs</label>
+            <p class="field-copy">
+              Use one exact product page per line. The extractor is strongest on
+              individual product pages, not brand homepages.
+            </p>
+            <textarea
+              id="source-urls"
+              spellcheck="false"
+              placeholder="One URL per line&#10;https://www.casetify.com/product/impact-case-hello-kitty"
+            ></textarea>
+          </div>
 
-          <label for="comparison-sites">Comparison sites or marketplace domains</label>
-          <textarea
-            id="comparison-sites"
-            placeholder="Optional if configured in .env&#10;One URL or domain per line&#10;https://shopee.sg/&#10;https://www.lazada.sg/"
-          ></textarea>
+          <div class="field-block">
+            <label for="comparison-sites">Marketplace search targets</label>
+            <p class="field-copy">
+              Add domains or URLs to search manually, or leave this blank to use
+              your configured defaults.
+            </p>
+            <textarea
+              id="comparison-sites"
+              spellcheck="false"
+              placeholder="Optional if configured in .env&#10;One URL or domain per line&#10;https://shopee.sg/&#10;https://www.lazada.sg/"
+            ></textarea>
+          </div>
 
-          <button type="submit" id="run-button">Run Investigation</button>
+          <div class="button-row">
+            <button type="submit" id="run-button">Run Investigation</button>
+            <p class="form-footnote">
+              This starts a live TinyFish-backed investigation and streams the
+              result state below.
+            </p>
+          </div>
         </form>
       </section>
 
       <section class="panel progress-panel">
         <div class="panel-header">
           <div>
-            <p class="section-label">Pipeline</p>
+            <p class="section-label">Workflow</p>
             <h2>Agent Progress</h2>
           </div>
         </div>
-        <ol class="progress-list">
-          <li>Source Extraction Agent</li>
-          <li>Candidate Discovery Agent</li>
-          <li>Product Comparison Agent</li>
-          <li>Evidence Agent</li>
-          <li>Ranking Agent</li>
-          <li>Research Summary Agent</li>
+        <div class="progress-overview">
+          <div
+            class="progress-track"
+            id="progress-track"
+            role="progressbar"
+            aria-label="Investigation progress"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-valuenow="0"
+          >
+            <div class="progress-fill" id="progress-fill"></div>
+          </div>
+          <p class="progress-overview-text" id="progress-overview">
+            No investigation running yet.
+          </p>
+        </div>
+        <ol class="progress-list" id="progress-list">
+          <li data-step="source_extraction" data-status="pending">
+            <span class="step-label">Extract official product details</span>
+            <span class="step-state">Pending</span>
+          </li>
+          <li data-step="candidate_discovery" data-status="pending">
+            <span class="step-label">Search configured marketplaces</span>
+            <span class="step-state">Pending</span>
+          </li>
+          <li data-step="product_comparison" data-status="pending">
+            <span class="step-label">Compare candidate listings</span>
+            <span class="step-state">Pending</span>
+          </li>
+          <li data-step="evidence" data-status="pending">
+            <span class="step-label">Assemble supporting evidence</span>
+            <span class="step-state">Pending</span>
+          </li>
+          <li data-step="ranking" data-status="pending">
+            <span class="step-label">Rank suspicious matches</span>
+            <span class="step-state">Pending</span>
+          </li>
+          <li data-step="research_summary" data-status="pending">
+            <span class="step-label">Summarize the investigation</span>
+            <span class="step-state">Pending</span>
+          </li>
         </ol>
-        <p class="progress-text" id="progress-text">
+        <p class="progress-text" id="progress-text" aria-live="polite">
           Waiting for an investigation to start.
         </p>
-        <div class="activity-log" id="activity-log"></div>
+        <section class="activity-shell" aria-live="polite">
+          <div class="activity-header">
+            <p class="section-label">Activity</p>
+            <h3>Live Agent Stream</h3>
+          </div>
+          <div class="activity-log" id="activity-log"></div>
+        </section>
       </section>
 
       <section class="panel results-panel">
         <div class="panel-header">
           <div>
             <p class="section-label">Results</p>
-            <h2>Investigation Output</h2>
+            <h2>Investigation Results</h2>
           </div>
         </div>
-        <div id="results"></div>
+        <div id="results" aria-live="polite"></div>
       </section>
     </main>
 
@@ -90,7 +150,7 @@
         <div class="report-source"></div>
         <div class="matches"></div>
         <details class="agent-log">
-          <summary>Agent reasoning</summary>
+          <summary>Agent Log</summary>
           <div class="agent-log-content"></div>
         </details>
       </article>
