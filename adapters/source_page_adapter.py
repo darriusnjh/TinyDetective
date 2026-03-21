@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from models.schemas import SourceProduct
@@ -15,7 +16,11 @@ class TinyFishSourcePageAdapter:
     def __init__(self, client: TinyFishClient | None = None) -> None:
         self.client = client or TinyFishClient()
 
-    async def extract_product(self, source_url: str) -> tuple[SourceProduct, dict[str, Any]]:
+    async def extract_product(
+        self,
+        source_url: str,
+        on_update: Callable[[TinyFishRun], Awaitable[None] | None] | None = None,
+    ) -> tuple[SourceProduct, dict[str, Any]]:
         goal = (
             "Visit this official product page and extract structured product data. "
             "Return valid JSON only with this exact shape: "
@@ -25,7 +30,7 @@ class TinyFishSourcePageAdapter:
             "Use null for unknown scalar values and [] for unknown lists. "
             "Do not invent values that are not visible on the page."
         )
-        run = await self.client.run_json(source_url, goal)
+        run = await self.client.run_json(source_url, goal, on_update=on_update)
         data = self._coerce_result_object(run)
         data["source_url"] = source_url
         return SourceProduct.model_validate(data), self._raw_output(run)
@@ -48,4 +53,8 @@ class TinyFishSourcePageAdapter:
             "tinyfish_run_id": run.run_id,
             "tinyfish_status": run.status,
             "tinyfish_result": run.result,
+            "tinyfish_elapsed_seconds": run.elapsed_seconds,
+            "tinyfish_delayed": run.delayed,
+            "tinyfish_last_heartbeat_at": run.last_heartbeat_at.isoformat() if run.last_heartbeat_at else None,
+            "tinyfish_last_progress_at": run.last_progress_at.isoformat() if run.last_progress_at else None,
         }

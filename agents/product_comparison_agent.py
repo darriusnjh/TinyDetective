@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from adapters.comparison_site_adapter import TinyFishComparisonSiteAdapter
 from models.schemas import CandidateProduct, ComparisonResult, SourceProduct
+from services.tinyfish_client import TinyFishRun
 
 
 def counterfeit_risk_score_safe(score: float) -> bool:
@@ -23,11 +25,19 @@ class ProductComparisonAgent:
         self,
         source_product: SourceProduct,
         candidate: CandidateProduct,
+        on_update: Callable[[TinyFishRun], Awaitable[None] | None] | None = None,
     ) -> tuple[ComparisonResult, dict[str, Any]]:
-        candidate_full, raw_output = await self.adapter.fetch_candidate_product(
-            str(candidate.product_url),
-            candidate.marketplace,
-        )
+        if on_update is None:
+            candidate_full, raw_output = await self.adapter.fetch_candidate_product(
+                str(candidate.product_url),
+                candidate.marketplace,
+            )
+        else:
+            candidate_full, raw_output = await self.adapter.fetch_candidate_product(
+                str(candidate.product_url),
+                candidate.marketplace,
+                on_update=on_update,
+            )
         comparisons = {
             "brand": self._eq(source_product.brand, candidate_full.brand),
             "title": self._contains(source_product.product_name, candidate_full.title),

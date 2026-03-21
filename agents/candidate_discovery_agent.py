@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from adapters.comparison_site_adapter import TinyFishComparisonSiteAdapter
 from models.schemas import CandidateProduct, SourceProduct
+from services.tinyfish_client import TinyFishRun
 
 
 class CandidateDiscoveryAgent:
@@ -19,11 +21,20 @@ class CandidateDiscoveryAgent:
         source_product: SourceProduct,
         comparison_sites: list[str],
         top_n: int = 3,
+        on_update: Callable[[TinyFishRun], Awaitable[None] | None] | None = None,
     ) -> tuple[list[CandidateProduct], list[dict[str, Any]]]:
         candidates: list[CandidateProduct] = []
         raw_outputs: list[dict[str, Any]] = []
         for site in comparison_sites:
-            site_candidates, raw_output = await self.adapter.search(source_product, site, top_n=top_n)
+            if on_update is None:
+                site_candidates, raw_output = await self.adapter.search(source_product, site, top_n=top_n)
+            else:
+                site_candidates, raw_output = await self.adapter.search(
+                    source_product,
+                    site,
+                    top_n=top_n,
+                    on_update=on_update,
+                )
             candidates.extend(site_candidates)
             raw_outputs.append({"comparison_site": site, **raw_output})
         return candidates, raw_outputs

@@ -35,6 +35,11 @@ def _csv_env(name: str) -> list[str]:
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
+def _float_env(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    return float(raw) if raw is not None else default
+
+
 _load_dotenv(ENV_PATH)
 
 
@@ -45,8 +50,11 @@ class Settings:
     tinyfish_browser_profile: str = os.getenv("TINYFISH_BROWSER_PROFILE", "stealth")
     tinyfish_proxy_enabled: bool = _bool_env("TINYFISH_PROXY_ENABLED", False)
     tinyfish_proxy_country_code: str = os.getenv("TINYFISH_PROXY_COUNTRY_CODE", "SG")
-    tinyfish_poll_interval_seconds: float = float(os.getenv("TINYFISH_POLL_INTERVAL_SECONDS", "2.0"))
-    tinyfish_run_timeout_seconds: float = float(os.getenv("TINYFISH_RUN_TIMEOUT_SECONDS", "120.0"))
+    tinyfish_poll_interval_seconds: float = _float_env("TINYFISH_POLL_INTERVAL_SECONDS", 2.0)
+    tinyfish_http_timeout_seconds: float = _float_env("TINYFISH_HTTP_TIMEOUT_SECONDS", 15.0)
+    tinyfish_run_soft_timeout_seconds: float = _float_env("TINYFISH_RUN_SOFT_TIMEOUT_SECONDS", 300.0)
+    tinyfish_run_hard_timeout_seconds: float = _float_env("TINYFISH_RUN_HARD_TIMEOUT_SECONDS", 1800.0)
+    tinyfish_run_stall_timeout_seconds: float = _float_env("TINYFISH_RUN_STALL_TIMEOUT_SECONDS", 120.0)
     brand_landing_page_url: str = os.getenv("BRAND_LANDING_PAGE_URL", "")
     ecommerce_store_urls: list[str] = None  # type: ignore[assignment]
 
