@@ -38,6 +38,25 @@
 
               <div class="composer-footer">
                 <p class="config-note sr-only" id="config-note"></p>
+                <div class="composer-history">
+                  <button
+                    type="button"
+                    class="panel-action composer-secondary-action"
+                    id="history-button"
+                    aria-expanded="false"
+                    aria-haspopup="true"
+                    aria-controls="past-runs"
+                  >
+                    Saved runs
+                  </button>
+                  <div class="history-dropdown" id="history-dropdown" hidden>
+                    <div class="history-dropdown-header">
+                      <p class="section-label">Archive</p>
+                      <span class="history-dropdown-caption">Reopen a saved investigation</span>
+                    </div>
+                    <div class="past-runs-list" id="past-runs" aria-live="polite"></div>
+                  </div>
+                </div>
                 <button type="submit" id="run-button">Investigate</button>
               </div>
             </div>
@@ -276,6 +295,9 @@
                       </p>
                       <ol class="ranking-ladder" id="timeline-ranking-list" aria-live="polite"></ol>
                       <div class="ranking-actions">
+                        <button type="button" class="report-action report-action--secondary" id="new-investigation-button">
+                          New investigation
+                        </button>
                         <button type="button" class="report-action" id="generate-report-button" disabled>
                           Generate report
                         </button>
@@ -289,10 +311,6 @@
             <p class="progress-text" id="progress-text" aria-live="polite">
               Waiting for an investigation to start.
             </p>
-          </section>
-
-          <section class="past-runs-panel" hidden>
-            <div class="past-runs-list" id="past-runs" aria-live="polite"></div>
           </section>
 
           <section class="results-panel" hidden>
@@ -310,8 +328,9 @@
                 <h2>Evidence Dossier</h2>
               </div>
               <div class="report-actions">
+                <button type="button" class="panel-action" id="report-new-button">New investigation</button>
                 <button type="button" class="panel-action" id="report-back-button">Back to investigation</button>
-                <button type="button" class="panel-action" id="report-open-button" hidden>Open in new tab</button>
+                <button type="button" class="panel-action" id="report-open-button" hidden>Open / print</button>
               </div>
             </div>
 
@@ -334,6 +353,7 @@
           </section>
         </div>
       </section>
+
     </main>
 
     <template id="report-template">

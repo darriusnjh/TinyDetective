@@ -5,6 +5,8 @@ const sourceUrlsInput = document.getElementById("source-urls");
 const comparisonSitesInput = document.getElementById("comparison-sites");
 const resultsNode = document.getElementById("results");
 const pastRunsNode = document.getElementById("past-runs");
+const historyDropdown = document.getElementById("history-dropdown");
+const historyButton = document.getElementById("history-button");
 const statusPill = document.getElementById("status-pill");
 const progressText = document.getElementById("progress-text");
 const progressOverview = document.getElementById("progress-overview");
@@ -24,11 +26,13 @@ const timelineSignalGraph = document.getElementById("timeline-signal-graph");
 const timelineAnalysisLog = document.getElementById("timeline-analysis-log");
 const timelineRankingList = document.getElementById("timeline-ranking-list");
 const generateReportButton = document.getElementById("generate-report-button");
+const newInvestigationButton = document.getElementById("new-investigation-button");
 const reportPdfFrame = document.getElementById("report-pdf-frame");
 const reportMeta = document.getElementById("report-meta");
 const reportNote = document.getElementById("report-note");
 const reportBackButton = document.getElementById("report-back-button");
 const reportOpenButton = document.getElementById("report-open-button");
+const reportNewButton = document.getElementById("report-new-button");
 const timelineTrack = document.getElementById("progress-list");
 const timelineNotes = {
   source: document.getElementById("timeline-source-note"),
@@ -2016,6 +2020,15 @@ function setPhase(phase) {
   body.dataset.phase = phase;
 }
 
+function setHistoryMenuOpen(isOpen) {
+  if (!historyButton || !historyDropdown) {
+    return;
+  }
+
+  historyButton.setAttribute("aria-expanded", String(isOpen));
+  historyDropdown.hidden = !isOpen;
+}
+
 function setComposerInvalid(isInvalid) {
   promptComposer.classList.toggle("is-invalid", isInvalid);
 }
@@ -2035,6 +2048,35 @@ function setSubmitting(isSubmitting) {
   runButton.disabled = isSubmitting;
   runButton.setAttribute("aria-busy", String(isSubmitting));
   runButton.textContent = isSubmitting ? "Investigating..." : defaultRunButtonLabel;
+}
+
+function startNewInvestigation() {
+  if (pollTimer) {
+    window.clearTimeout(pollTimer);
+    pollTimer = null;
+  }
+
+  clearPersistedInvestigationId();
+  latestInvestigationPayload = null;
+  activeTimelineStage = "source";
+  resetProgressTracking();
+  setStatus("idle");
+  updateProgressUI({
+    overview: "No investigation running yet.",
+    detail: "Start a new investigation from the prompt.",
+    percent: 0,
+    stepStates: Object.fromEntries(progressStepDefinitions.map((step) => [step.key, "pending"])),
+  });
+  renderTimeline(null);
+  renderEmptyState("Add official product page URLs to compare them against live marketplace listings.");
+  setSubmitting(false);
+  setComposerInvalid(false);
+  resetReportScene();
+  setHistoryMenuOpen(false);
+  sourceUrlsInput.value = "";
+  syncPromptHeight();
+  setPhase("prompt");
+  sourceUrlsInput.focus();
 }
 
 function getPersistedInvestigationId() {
@@ -3429,9 +3471,28 @@ if (generateReportButton) {
   });
 }
 
+if (newInvestigationButton) {
+  newInvestigationButton.addEventListener("click", () => {
+    startNewInvestigation();
+  });
+}
+
+if (historyButton) {
+  historyButton.addEventListener("click", () => {
+    const isOpen = historyButton.getAttribute("aria-expanded") === "true";
+    setHistoryMenuOpen(!isOpen);
+  });
+}
+
 if (reportBackButton) {
   reportBackButton.addEventListener("click", () => {
     setPhase("progress");
+  });
+}
+
+if (reportNewButton) {
+  reportNewButton.addEventListener("click", () => {
+    startNewInvestigation();
   });
 }
 
@@ -3450,9 +3511,33 @@ if (pastRunsNode) {
     if (!button) {
       return;
     }
+    setHistoryMenuOpen(false);
     loadInvestigation(button.dataset.investigationId);
   });
 }
+
+document.addEventListener("click", (event) => {
+  if (!historyButton || !historyDropdown) {
+    return;
+  }
+
+  const target = event.target;
+  if (!(target instanceof Node)) {
+    return;
+  }
+
+  if (historyButton.contains(target) || historyDropdown.contains(target)) {
+    return;
+  }
+
+  setHistoryMenuOpen(false);
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    setHistoryMenuOpen(false);
+  }
+});
 
 setStatus("idle");
 resetProgressTracking();
@@ -3483,7 +3568,7 @@ if (currentInvestigationId) {
 }
 
 window.addEventListener("beforeunload", () => {
-  revokeCurrentReportPdfUrl();
+  revokeCurrentReportDocumentUrl();
 });
 
 fetch("/config")
