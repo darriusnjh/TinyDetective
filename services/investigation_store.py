@@ -180,11 +180,21 @@ class InvestigationStore:
             request_payload = InvestigationCreateRequest.model_validate_json(row["request_json"])
             response_payload = InvestigationResponse.model_validate_json(row["response_json"])
             source_urls = [str(source_url) for source_url in request_payload.source_urls]
+            primary_report = response_payload.reports[0] if response_payload.reports else None
+            primary_source_product = primary_report.extracted_source_product if primary_report else None
+            primary_source_title = None
+            if primary_source_product is not None:
+                primary_source_title = (
+                    primary_source_product.product_name
+                    or primary_source_product.model
+                    or primary_source_product.brand
+                )
             items.append(
                 InvestigationListItem(
                     investigation_id=row["investigation_id"],
                     status=InvestigationStatus(row["status"]),
                     primary_source_url=source_urls[0] if source_urls else None,
+                    primary_source_title=primary_source_title,
                     source_count=len(source_urls),
                     error=response_payload.error,
                     created_at=response_payload.created_at,
@@ -221,4 +231,3 @@ class InvestigationStore:
     async def append_activity(self, investigation_id: str, entry: ActivityLogEntry) -> None:
         async with self._lock:
             await asyncio.to_thread(self._append_activity_sync, investigation_id, entry)
-

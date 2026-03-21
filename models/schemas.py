@@ -147,6 +147,7 @@ class InvestigationListItem(BaseModel):
     investigation_id: str
     status: InvestigationStatus
     primary_source_url: str | None = None
+    primary_source_title: str | None = None
     source_count: int = 0
     error: str | None = None
     created_at: datetime

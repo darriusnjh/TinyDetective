@@ -2160,10 +2160,13 @@ function formatRunTimestamp(value) {
   });
 }
 
-function formatRunSource(sourceUrl) {
+function formatRunSource(run) {
+  const sourceUrl = run?.primary_source_url;
+  const sourceTitle = sanitizePlainText(run?.primary_source_title || "");
+
   if (!sourceUrl) {
     return {
-      title: "Investigation",
+      title: sourceTitle || "Investigation",
       detail: "No source URL saved",
       full: "",
     };
@@ -2173,13 +2176,13 @@ function formatRunSource(sourceUrl) {
     const url = new URL(sourceUrl);
     const pathname = decodeURIComponent(url.pathname || "/").replace(/\/$/, "") || "/";
     return {
-      title: url.hostname.replace(/^www\./, ""),
+      title: sourceTitle || url.hostname.replace(/^www\./, ""),
       detail: pathname === "/" ? "Homepage" : pathname,
       full: url.toString(),
     };
   } catch {
     return {
-      title: sourceUrl,
+      title: sourceTitle || sourceUrl,
       detail: "",
       full: sourceUrl,
     };
@@ -2243,7 +2246,7 @@ function renderPastRuns(runs) {
 
   runs.forEach((run) => {
     const investigationId = run.investigation_id;
-    const source = formatRunSource(run.primary_source_url);
+    const source = formatRunSource(run);
 
     let item = existingItems.get(investigationId);
     if (!item) {
