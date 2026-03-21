@@ -66,9 +66,9 @@ class UpdatingSourceAgent:
         return SourceProduct(source_url=source_url, brand="Brand"), {"tinyfish_run_id": "run-source-123"}
 
 
-def test_orchestrator_persists_inflight_task_progress() -> None:
+def test_orchestrator_persists_inflight_task_progress(tmp_path) -> None:
     async def run() -> None:
-        store = InvestigationStore()
+        store = InvestigationStore(tmp_path / "orchestrator-progress.sqlite3")
         source_agent = BlockingSourceAgent()
         orchestrator = InvestigationOrchestrator(
             store=store,
@@ -101,9 +101,9 @@ def test_orchestrator_persists_inflight_task_progress() -> None:
     asyncio.run(run())
 
 
-def test_orchestrator_persists_provider_heartbeat_updates() -> None:
+def test_orchestrator_persists_provider_heartbeat_updates(tmp_path) -> None:
     async def run() -> None:
-        store = InvestigationStore()
+        store = InvestigationStore(tmp_path / "orchestrator-heartbeat.sqlite3")
         source_agent = UpdatingSourceAgent()
         orchestrator = InvestigationOrchestrator(
             store=store,
@@ -132,5 +132,32 @@ def test_orchestrator_persists_provider_heartbeat_updates() -> None:
 
         source_agent.release.set()
         await asyncio.wait_for(investigation_task, timeout=1.0)
+
+    asyncio.run(run())
+
+
+def test_investigation_store_persists_across_instances(tmp_path) -> None:
+    async def run() -> None:
+        database_path = tmp_path / "investigations.sqlite3"
+        store = InvestigationStore(database_path)
+        created = await store.create(
+            InvestigationCreateRequest(
+                source_urls=["https://brand.example/products/alpha-case"],
+                comparison_sites=["https://shopee.sg/"],
+            )
+        )
+
+        created.status = InvestigationStatus.completed
+        await store.save(created)
+
+        reloaded_store = InvestigationStore(database_path)
+        saved_request = await reloaded_store.get_request(created.investigation_id)
+        saved_investigation = await reloaded_store.get(created.investigation_id)
+
+        assert saved_request.source_urls == ["https://brand.example/products/alpha-case"]
+        assert saved_request.comparison_sites == ["https://shopee.sg/"]
+        assert saved_investigation is not None
+        assert saved_investigation.investigation_id == created.investigation_id
+        assert saved_investigation.status == InvestigationStatus.completed
 
     asyncio.run(run())

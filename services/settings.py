@@ -8,6 +8,7 @@ from pathlib import Path
 
 
 ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
+DEFAULT_INVESTIGATION_STORE_PATH = Path(__file__).resolve().parent.parent / "data" / "investigations.sqlite3"
 
 
 def _load_dotenv(path: Path) -> None:
@@ -45,6 +46,7 @@ _load_dotenv(ENV_PATH)
 
 @dataclass(frozen=True)
 class Settings:
+    investigation_store_path: str = os.getenv("INVESTIGATION_STORE_PATH", str(DEFAULT_INVESTIGATION_STORE_PATH))
     tinyfish_api_key: str = os.getenv("TINYFISH_API_KEY", "")
     tinyfish_base_url: str = os.getenv("TINYFISH_BASE_URL", "https://agent.tinyfish.ai")
     tinyfish_browser_profile: str = os.getenv("TINYFISH_BROWSER_PROFILE", "stealth")

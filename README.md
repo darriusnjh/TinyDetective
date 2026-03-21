@@ -10,7 +10,7 @@ This version is wired to the real TinyFish service for live browser automations.
 - `agents/`: Source extraction, discovery, comparison, evidence, ranking, and summary agents.
 - `adapters/`: TinyFish-backed official-product extraction and marketplace candidate discovery adapters.
 - `models/`: Typed Pydantic schemas for API payloads and pipeline data.
-- `services/`: Investigation orchestrator, in-memory persistence, and TinyFish-compatible runtime abstraction.
+- `services/`: Investigation orchestrator, SQLite-backed persistence, and TinyFish-compatible runtime abstraction.
 - `frontend/`: Minimal static UI for launching investigations and inspecting results.
 - `tests/`: Basic tests and sample fixture output.
 
@@ -62,13 +62,15 @@ TINYFISH_RUN_HARD_TIMEOUT_SECONDS=1800.0
 TINYFISH_RUN_STALL_TIMEOUT_SECONDS=120.0
 BRAND_LANDING_PAGE_URL=https://www.yourbrand.com/
 ECOMMERCE_STORE_URLS=https://shopee.sg/,https://www.lazada.sg/
+INVESTIGATION_STORE_PATH=data/investigations.sqlite3
 ```
 
 If `comparison_sites` is omitted from `POST /investigate`, the backend falls back to `ECOMMERCE_STORE_URLS`.
 
 ## Notes
 
-- Persistence is currently in-memory and resets on restart.
+- Investigation runs are stored in SQLite and survive backend restarts by default.
+- The default database file is `data/investigations.sqlite3`, configurable with `INVESTIGATION_STORE_PATH`.
 - TinyFish calls are made through `services/tinyfish_client.py`, which uses the documented async run and run-status endpoints.
 - `services/tinyfish_runtime.py` keeps orchestration logic separate from execution flow.
 - The UI exposes extracted source data, ranked results, evidence, suspicious signals, and raw agent reasoning.
