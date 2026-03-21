@@ -22,7 +22,7 @@ class TinyFishSourcePageAdapter:
         source_url: str,
         on_update: Callable[[TinyFishRun], Awaitable[None] | None] | None = None,
     ) -> tuple[SourceProduct, dict[str, Any]]:
-        run = await self.client.run_json(source_url, self._goal(), on_update=on_update)
+        run = await self.client.run_json_sse(source_url, self._goal(), on_update=on_update)
         data = self._coerce_result_object(run)
         data["source_url"] = source_url
         return SourceProduct.model_validate(data), self._raw_output(run)
@@ -76,9 +76,9 @@ class TinyFishSourcePageAdapter:
             "tinyfish_run_id": run.run_id,
             "tinyfish_status": run.status,
             "tinyfish_result": run.result,
+            "tinyfish_streaming_url": run.streaming_url,
             "tinyfish_elapsed_seconds": run.elapsed_seconds,
             "tinyfish_delayed": run.delayed,
             "tinyfish_last_heartbeat_at": run.last_heartbeat_at.isoformat() if run.last_heartbeat_at else None,
             "tinyfish_last_progress_at": run.last_progress_at.isoformat() if run.last_progress_at else None,
         }
-

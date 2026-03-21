@@ -162,6 +162,7 @@ class TinyFishComparisonSiteAdapter:
             "tinyfish_run_id": run.run_id,
             "tinyfish_status": run.status,
             "tinyfish_result": run.result,
+            "tinyfish_streaming_url": run.streaming_url,
             "tinyfish_elapsed_seconds": run.elapsed_seconds,
             "tinyfish_delayed": run.delayed,
             "tinyfish_last_heartbeat_at": run.last_heartbeat_at.isoformat() if run.last_heartbeat_at else None,

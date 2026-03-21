@@ -1943,7 +1943,28 @@ function setFocusedTimelineStage(stageKey, options = {}) {
 }
 
 function getSourcePreviewUrl(report) {
+  const sourceTask = getSourceTask(report);
+  const streamingUrl = sourceTask?.output_payload?.runtime?.tinyfish_streaming_url;
+  if (streamingUrl) {
+    return streamingUrl;
+  }
+  if (sourceTask && ["queued", "running", "delayed"].includes(String(sourceTask.status || "").toLowerCase())) {
+    return "";
+  }
+  return (
+    report?.source_url ||
+    lastSubmittedSourceUrl ||
+    parseLines(sourceUrlsInput.value)[0] ||
+    ""
+  );
+}
+
+function getSourceUrl(report) {
   return report?.source_url || lastSubmittedSourceUrl || parseLines(sourceUrlsInput.value)[0] || "";
+}
+
+function getSourceTask(report) {
+  return (report?.raw_agent_outputs || []).find((task) => task.agent_name === "source_extraction") || null;
 }
 
 function getCandidateTasks(report) {
@@ -2599,20 +2620,60 @@ function renderProgressTracking(payload) {
 }
 
 function renderSourceStage(report) {
-  const sourceUrl = getSourcePreviewUrl(report);
+  const sourceTask = getSourceTask(report);
+  const sourceUrl = getSourceUrl(report);
+  const previewUrl = getSourcePreviewUrl(report);
   const product = report?.extracted_source_product || null;
+  const usingTinyFishPreview = Boolean(
+    previewUrl &&
+      sourceUrl &&
+      previewUrl !== sourceUrl &&
+      previewUrl.includes("tinyfish")
+  );
+  const sourceTaskActive = Boolean(
+    sourceTask && ["queued", "running", "delayed"].includes(String(sourceTask.status || "").toLowerCase())
+  );
 
   setTextContent(timelineSourceUrl, sourceUrl || "No source URL selected yet.");
   timelineSourceLink.hidden = !sourceUrl;
-  if (sourceUrl) {
+  if (previewUrl) {
     timelineSourceLink.href = sourceUrl;
-    if (timelineSourceFrame.dataset.sourceUrl !== sourceUrl) {
-      timelineSourceFrame.src = sourceUrl;
-      timelineSourceFrame.dataset.sourceUrl = sourceUrl;
+    if (timelineSourceFrame.dataset.sourceUrl !== previewUrl) {
+      timelineSourceFrame.removeAttribute("srcdoc");
+      timelineSourceFrame.src = previewUrl;
+      timelineSourceFrame.dataset.sourceUrl = previewUrl;
     }
-  } else if (timelineSourceFrame.dataset.sourceUrl) {
+  } else {
     timelineSourceFrame.removeAttribute("src");
     timelineSourceFrame.dataset.sourceUrl = "";
+    timelineSourceFrame.srcdoc = `
+      <style>
+        body {
+          margin: 0;
+          min-height: 100vh;
+          display: grid;
+          place-items: center;
+          padding: 32px;
+          background: linear-gradient(180deg, #f8f4ed, #f2ebe0);
+          color: #4d4137;
+          font: 16px/1.6 Manrope, sans-serif;
+        }
+        .placeholder {
+          max-width: 34ch;
+          text-align: center;
+        }
+        strong {
+          display: block;
+          margin-bottom: 10px;
+          font-size: 19px;
+          color: #322922;
+        }
+      </style>
+      <div class="placeholder">
+        <strong>TinyFish live preview is not available yet.</strong>
+        <div>The source step is still running. If TinyFish publishes a browser stream, it will appear here automatically.</div>
+      </div>
+    `;
   }
 
   if (!sourceUrl) {
@@ -2651,7 +2712,11 @@ function renderSourceStage(report) {
     timelineNotes.source,
     product
       ? "Official product details extracted from the source page."
-      : "Showing the live source page while extraction is still running."
+      : usingTinyFishPreview
+        ? "Showing TinyFish live browser preview while extraction is still running."
+        : sourceTaskActive
+          ? "Waiting for TinyFish to publish a live browser preview for this source page."
+        : "Showing the live source page while extraction is still running."
   );
   setInnerHtml(timelineSourceMeta, metaHtml);
 }
