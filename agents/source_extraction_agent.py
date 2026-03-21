@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 from typing import Any
 
 from adapters.source_page_adapter import TinyFishSourcePageAdapter
@@ -24,3 +25,26 @@ class SourceExtractionAgent:
         if on_update is None:
             return await self.adapter.extract_product(source_url)
         return await self.adapter.extract_product(source_url, on_update=on_update)
+
+    async def resume(
+        self,
+        source_url: str,
+        run_id: str,
+        on_update: Callable[[TinyFishRun], Awaitable[None] | None] | None = None,
+        started_at: datetime | None = None,
+        last_progress_at: datetime | None = None,
+    ) -> tuple[SourceProduct, dict[str, Any]]:
+        if on_update is None:
+            return await self.adapter.resume_extract_product(
+                source_url,
+                run_id,
+                started_at=started_at,
+                last_progress_at=last_progress_at,
+            )
+        return await self.adapter.resume_extract_product(
+            source_url,
+            run_id,
+            on_update=on_update,
+            started_at=started_at,
+            last_progress_at=last_progress_at,
+        )

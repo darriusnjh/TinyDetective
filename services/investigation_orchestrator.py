@@ -12,7 +12,9 @@ from agents.research_summary_agent import ResearchSummaryAgent
 from agents.source_extraction_agent import SourceExtractionAgent
 from models.schemas import (
     AgentTaskState,
+    CandidateProduct,
     ComparisonResult,
+    EvidenceItem,
     InvestigationReport,
     InvestigationResponse,
     InvestigationStatus,
@@ -28,6 +30,8 @@ from services.tinyfish_runtime import TinyFishRuntime
 
 class InvestigationOrchestrator:
     """Coordinate the multi-agent counterfeit research workflow."""
+
+    ACTIVE_TASK_STATUSES = {TaskStatus.running, TaskStatus.delayed}
 
     def __init__(
         self,
@@ -55,6 +59,21 @@ class InvestigationOrchestrator:
             source_url=source_url,
             summary="Queued for investigation.",
         )
+
+    @staticmethod
+    def _merge_reports(
+        existing_reports: list[InvestigationReport],
+        source_urls: list[str],
+    ) -> list[InvestigationReport]:
+        reports: list[InvestigationReport] = []
+        for index, source_url in enumerate(source_urls):
+            if index < len(existing_reports):
+                report = existing_reports[index]
+                report.source_url = source_url
+            else:
+                report = InvestigationOrchestrator._pending_report(source_url)
+            reports.append(report)
+        return reports
 
     async def _save_report_progress(
         self,
@@ -88,6 +107,116 @@ class InvestigationOrchestrator:
             "tinyfish_last_progress_at": run.last_progress_at.isoformat() if run.last_progress_at else None,
         }
 
+    @staticmethod
+    def _search_summary(comparison_sites: list[str]) -> str:
+        return (
+            f"Searching {len(comparison_sites)} marketplace target"
+            f"{'' if len(comparison_sites) == 1 else 's'}."
+        )
+
+    @staticmethod
+    def _candidate_summary(candidate_count: int) -> str:
+        if candidate_count == 0:
+            return "No candidate listings found. Moving to ranking and summary."
+        return (
+            f"Comparing {candidate_count} candidate listing"
+            f"{'' if candidate_count == 1 else 's'}."
+        )
+
+    @staticmethod
+    def _comparison_summary(candidate_index: int, total_candidates: int) -> str:
+        return f"Comparing candidate {candidate_index} of {total_candidates}."
+
+    @staticmethod
+    def _evidence_summary(candidate_index: int, total_candidates: int) -> str:
+        return f"Collecting evidence for candidate {candidate_index} of {total_candidates}."
+
+    @staticmethod
+    def _find_task(
+        task_log: list[AgentTaskState],
+        agent_name: str,
+        *,
+        identifier_key: str | None = None,
+        identifier_value: str | None = None,
+        statuses: set[TaskStatus] | None = None,
+    ) -> AgentTaskState | None:
+        for task in reversed(task_log):
+            if task.agent_name != agent_name:
+                continue
+            if identifier_key is not None and task.input_payload.get(identifier_key) != identifier_value:
+                continue
+            if statuses is not None and task.status not in statuses:
+                continue
+            return task
+        return None
+
+    @staticmethod
+    def _load_source_product(
+        report: InvestigationReport,
+        task_log: list[AgentTaskState],
+    ) -> SourceProduct | None:
+        if report.extracted_source_product is not None:
+            return report.extracted_source_product
+        source_task = InvestigationOrchestrator._find_task(
+            task_log,
+            "source_extraction",
+            statuses={TaskStatus.completed},
+        )
+        source_payload = source_task.output_payload.get("source_product") if source_task else None
+        if source_payload is None:
+            return None
+        return SourceProduct.model_validate(source_payload)
+
+    @staticmethod
+    def _load_candidates_from_task(task: AgentTaskState) -> list[CandidateProduct]:
+        return [
+            CandidateProduct.model_validate(candidate)
+            for candidate in task.output_payload.get("candidates", [])
+        ]
+
+    @staticmethod
+    def _load_comparison_from_task(task: AgentTaskState) -> ComparisonResult:
+        return ComparisonResult.model_validate(task.output_payload["comparison"])
+
+    @staticmethod
+    def _load_evidence_from_task(task: AgentTaskState) -> list[EvidenceItem]:
+        return [
+            EvidenceItem.model_validate(item)
+            for item in task.output_payload.get("evidence", [])
+        ]
+
+    @staticmethod
+    def _prepare_task_for_retry(
+        task: AgentTaskState,
+        *,
+        clear_provider_state: bool = True,
+    ) -> None:
+        task.status = TaskStatus.running
+        task.error = None
+        task.output_payload = {}
+        task.started_at = utc_now()
+        task.completed_at = None
+        if clear_provider_state:
+            task.provider_run_id = None
+            task.provider_status = None
+            task.last_heartbeat_at = None
+            task.last_progress_at = None
+
+    @staticmethod
+    def _report_is_complete(report: InvestigationReport) -> bool:
+        if any(task.status in InvestigationOrchestrator.ACTIVE_TASK_STATUSES for task in report.raw_agent_outputs):
+            return False
+        if report.error is not None:
+            return True
+        return (
+            InvestigationOrchestrator._find_task(
+                report.raw_agent_outputs,
+                "research_summary",
+                statuses={TaskStatus.completed},
+            )
+            is not None
+        )
+
     async def _apply_task_update(
         self,
         investigation: InvestigationResponse,
@@ -117,30 +246,30 @@ class InvestigationOrchestrator:
     async def run_investigation(self, investigation_id: str) -> None:
         request = await self.store.get_request(investigation_id)
         investigation = await self.store.get(investigation_id)
-        if investigation is None:
+        if investigation is None or investigation.status in {InvestigationStatus.completed, InvestigationStatus.failed}:
             return
+
+        source_urls = [str(source_url) for source_url in request.source_urls]
         investigation.status = InvestigationStatus.running
         investigation.updated_at = utc_now()
         investigation.error = None
-        investigation.reports = [
-            self._pending_report(str(source_url))
-            for source_url in request.source_urls
-        ]
+        investigation.reports = self._merge_reports(investigation.reports, source_urls)
         await self.store.save(investigation)
 
         try:
-            comparison_sites = [
-                str(site) for site in request.comparison_sites
-            ] or settings.ecommerce_store_urls
+            comparison_sites = [str(site) for site in request.comparison_sites] or settings.ecommerce_store_urls
             if not comparison_sites:
                 raise ValueError(
                     "No comparison sites were provided in the request or ECOMMERCE_STORE_URLS."
                 )
-            for report_index, source_url in enumerate(request.source_urls):
+            for report_index, source_url in enumerate(source_urls):
+                report = investigation.reports[report_index]
+                if self._report_is_complete(report):
+                    continue
                 report = await self._run_for_source(
                     investigation,
                     report_index,
-                    str(source_url),
+                    source_url,
                     comparison_sites,
                     request.max_candidates_per_site,
                 )
@@ -151,22 +280,27 @@ class InvestigationOrchestrator:
             investigation.error = str(exc)
         await self.store.save(investigation)
 
-    async def _run_for_source(
+    async def _ensure_source_product(
         self,
         investigation: InvestigationResponse,
         report_index: int,
+        report: InvestigationReport,
+        task_log: list[AgentTaskState],
         source_url: str,
-        comparison_sites: list[str],
-        max_candidates_per_site: int,
-    ) -> InvestigationReport:
-        report = investigation.reports[report_index]
-        task_log: list[AgentTaskState] = []
-        source_product: SourceProduct | None = None
-        try:
-            search_summary = (
-                f"Searching {len(comparison_sites)} marketplace target"
-                f"{'' if len(comparison_sites) == 1 else 's'}."
-            )
+        search_summary: str,
+    ) -> SourceProduct:
+        source_product = self._load_source_product(report, task_log)
+        source_task = self._find_task(task_log, "source_extraction")
+        if source_task is not None and source_task.status == TaskStatus.completed and source_product is not None:
+            report.extracted_source_product = source_product
+            return source_product
+
+        should_resume = (
+            source_task is not None
+            and source_task.status in self.ACTIVE_TASK_STATUSES
+            and bool(source_task.provider_run_id)
+        )
+        if source_task is None:
             source_task = AgentTaskState(
                 agent_name="source_extraction",
                 status=TaskStatus.running,
@@ -174,11 +308,35 @@ class InvestigationOrchestrator:
                 started_at=utc_now(),
             )
             task_log.append(source_task)
-            report.summary = "Extracting official product details."
-            report.raw_agent_outputs = task_log
-            report.error = None
-            investigation.status = InvestigationStatus.running
-            await self._save_report_progress(investigation, report_index, report)
+        elif not should_resume:
+            self._prepare_task_for_retry(source_task)
+
+        report.summary = "Extracting official product details."
+        report.raw_agent_outputs = task_log
+        report.error = None
+        investigation.status = InvestigationStatus.running
+        await self._save_report_progress(investigation, report_index, report)
+
+        if should_resume:
+            source_product, source_raw_output = await self.runtime.run_agent(
+                lambda: self.source_agent.resume(
+                    source_url,
+                    source_task.provider_run_id or "",
+                    started_at=source_task.started_at,
+                    last_progress_at=source_task.last_progress_at,
+                    on_update=lambda run: self._apply_task_update(
+                        investigation,
+                        report_index,
+                        report,
+                        task_log,
+                        source_task,
+                        run,
+                        "Extracting official product details.",
+                        "Extracting official product details. TinyFish is still working on the source page.",
+                    ),
+                )
+            )
+        else:
             source_product, source_raw_output = await self.runtime.run_agent(
                 lambda: self._run_with_optional_update(
                     self.source_agent.run,
@@ -195,99 +353,227 @@ class InvestigationOrchestrator:
                     ),
                 )
             )
-            source_task.status = TaskStatus.completed
-            source_task.provider_status = source_raw_output.get("tinyfish_status")
-            source_task.provider_run_id = source_raw_output.get("tinyfish_run_id")
-            source_task.output_payload = {
-                "source_product": source_product.model_dump(),
-                "runtime": source_raw_output,
-            }
-            source_task.completed_at = utc_now()
-            report.extracted_source_product = source_product
-            report.summary = search_summary
-            investigation.status = InvestigationStatus.running
-            await self._save_report_progress(investigation, report_index, report)
 
-            discovery_task = AgentTaskState(
-                agent_name="candidate_discovery",
-                status=TaskStatus.running,
-                input_payload={"comparison_sites": comparison_sites, "top_n": max_candidates_per_site},
-                started_at=utc_now(),
-            )
-            task_log.append(discovery_task)
-            report.raw_agent_outputs = task_log
-            investigation.status = InvestigationStatus.running
-            await self._save_report_progress(investigation, report_index, report)
-            candidates, discovery_raw_outputs = await self.runtime.run_agent(
-                lambda: self._run_with_optional_update(
-                    self.discovery_agent.run,
-                    source_product,
-                    comparison_sites,
-                    top_n=max_candidates_per_site,
-                    on_update=lambda run: self._apply_task_update(
-                        investigation,
-                        report_index,
-                        report,
-                        task_log,
-                        discovery_task,
-                        run,
-                        search_summary,
-                        "Searching marketplace targets. TinyFish is still actively working through the search.",
-                    ),
-                )
-            )
-            discovery_task.status = TaskStatus.completed
-            last_discovery_runtime = discovery_raw_outputs[-1] if discovery_raw_outputs else {}
-            discovery_task.provider_status = last_discovery_runtime.get("tinyfish_status")
-            discovery_task.provider_run_id = last_discovery_runtime.get("tinyfish_run_id")
-            discovery_task.output_payload = {
-                "candidate_count": len(candidates),
-                "candidates": [candidate.model_dump() for candidate in candidates],
-                "runtime": discovery_raw_outputs,
-            }
-            discovery_task.completed_at = utc_now()
-            report.summary = (
-                f"Comparing {len(candidates)} candidate listing"
-                f"{'' if len(candidates) == 1 else 's'}."
-                if candidates
-                else "No candidate listings found. Moving to ranking and summary."
-            )
-            investigation.status = InvestigationStatus.running
-            await self._save_report_progress(investigation, report_index, report)
+        source_task.status = TaskStatus.completed
+        source_task.provider_status = source_raw_output.get("tinyfish_status")
+        source_task.provider_run_id = source_raw_output.get("tinyfish_run_id")
+        source_task.output_payload = {
+            "source_product": source_product.model_dump(),
+            "runtime": source_raw_output,
+        }
+        source_task.completed_at = utc_now()
+        report.extracted_source_product = source_product
+        report.summary = search_summary
+        investigation.status = InvestigationStatus.running
+        await self._save_report_progress(investigation, report_index, report)
+        return source_product
 
-            comparisons: list[ComparisonResult] = []
-            for candidate_index, candidate in enumerate(candidates, start=1):
-                comparison_summary = (
-                    f"Comparing candidate {candidate_index} of {len(candidates)}."
-                )
-                comparison_task = AgentTaskState(
-                    agent_name="product_comparison",
+    async def _ensure_candidates(
+        self,
+        investigation: InvestigationResponse,
+        report_index: int,
+        report: InvestigationReport,
+        task_log: list[AgentTaskState],
+        source_product: SourceProduct,
+        comparison_sites: list[str],
+        max_candidates_per_site: int,
+        search_summary: str,
+    ) -> list[CandidateProduct]:
+        legacy_discovery_task = self._find_task(
+            task_log,
+            "candidate_discovery",
+            statuses={TaskStatus.completed},
+        )
+        if (
+            legacy_discovery_task is not None
+            and "comparison_sites" in legacy_discovery_task.input_payload
+        ):
+            return self._load_candidates_from_task(legacy_discovery_task)
+
+        candidates: list[CandidateProduct] = []
+        for comparison_site in comparison_sites:
+            discovery_task = self._find_task(
+                task_log,
+                "candidate_discovery",
+                identifier_key="comparison_site",
+                identifier_value=comparison_site,
+            )
+            if discovery_task is not None and discovery_task.status == TaskStatus.completed:
+                candidates.extend(self._load_candidates_from_task(discovery_task))
+                continue
+
+            should_resume = (
+                discovery_task is not None
+                and discovery_task.status in self.ACTIVE_TASK_STATUSES
+                and bool(discovery_task.provider_run_id)
+            )
+            if discovery_task is None:
+                discovery_task = AgentTaskState(
+                    agent_name="candidate_discovery",
                     status=TaskStatus.running,
-                    input_payload={"product_url": str(candidate.product_url)},
+                    input_payload={
+                        "comparison_site": comparison_site,
+                        "top_n": max_candidates_per_site,
+                    },
                     started_at=utc_now(),
                 )
-                task_log.append(comparison_task)
-                report.raw_agent_outputs = task_log
-                report.summary = comparison_summary
-                investigation.status = InvestigationStatus.running
-                await self._save_report_progress(investigation, report_index, report)
-                comparison, comparison_raw_output = await self.runtime.run_agent(
-                    lambda candidate=candidate: self._run_with_optional_update(
-                        self.comparison_agent.run,
+                task_log.append(discovery_task)
+            elif not should_resume:
+                self._prepare_task_for_retry(discovery_task)
+
+            report.raw_agent_outputs = task_log
+            report.summary = search_summary
+            report.error = None
+            investigation.status = InvestigationStatus.running
+            await self._save_report_progress(investigation, report_index, report)
+
+            if should_resume:
+                site_candidates, discovery_raw_output = await self.runtime.run_agent(
+                    lambda: self.discovery_agent.resume_for_site(
                         source_product,
-                        candidate,
+                        comparison_site,
+                        discovery_task.provider_run_id or "",
+                        top_n=max_candidates_per_site,
+                        started_at=discovery_task.started_at,
+                        last_progress_at=discovery_task.last_progress_at,
                         on_update=lambda run: self._apply_task_update(
                             investigation,
                             report_index,
                             report,
                             task_log,
-                            comparison_task,
+                            discovery_task,
                             run,
-                            comparison_summary,
-                            f"Comparing candidate {candidate_index} of {len(candidates)}. TinyFish is still inspecting the listing.",
+                            search_summary,
+                            "Searching marketplace targets. TinyFish is still actively working through the search.",
                         ),
                     )
                 )
+            else:
+                site_candidates, discovery_raw_output = await self.runtime.run_agent(
+                    lambda: self.discovery_agent.run_for_site(
+                        source_product,
+                        comparison_site,
+                        top_n=max_candidates_per_site,
+                        on_update=lambda run: self._apply_task_update(
+                            investigation,
+                            report_index,
+                            report,
+                            task_log,
+                            discovery_task,
+                            run,
+                            search_summary,
+                            "Searching marketplace targets. TinyFish is still actively working through the search.",
+                        ),
+                    )
+                )
+
+            discovery_task.status = TaskStatus.completed
+            discovery_task.provider_status = discovery_raw_output.get("tinyfish_status")
+            discovery_task.provider_run_id = discovery_raw_output.get("tinyfish_run_id")
+            discovery_task.output_payload = {
+                "comparison_site": comparison_site,
+                "candidate_count": len(site_candidates),
+                "candidates": [candidate.model_dump() for candidate in site_candidates],
+                "runtime": discovery_raw_output,
+            }
+            discovery_task.completed_at = utc_now()
+            candidates.extend(site_candidates)
+            report.summary = self._candidate_summary(len(candidates))
+            investigation.status = InvestigationStatus.running
+            await self._save_report_progress(investigation, report_index, report)
+
+        return candidates
+
+    async def _ensure_comparisons(
+        self,
+        investigation: InvestigationResponse,
+        report_index: int,
+        report: InvestigationReport,
+        task_log: list[AgentTaskState],
+        source_product: SourceProduct,
+        candidates: list[CandidateProduct],
+    ) -> list[ComparisonResult]:
+        comparisons: list[ComparisonResult] = []
+        for candidate_index, candidate in enumerate(candidates, start=1):
+            product_url = str(candidate.product_url)
+            comparison_summary = self._comparison_summary(candidate_index, len(candidates))
+            comparison_task = self._find_task(
+                task_log,
+                "product_comparison",
+                identifier_key="product_url",
+                identifier_value=product_url,
+            )
+            comparison: ComparisonResult
+            if comparison_task is not None and comparison_task.status == TaskStatus.completed:
+                comparison = self._load_comparison_from_task(comparison_task)
+            else:
+                should_resume = (
+                    comparison_task is not None
+                    and comparison_task.status in self.ACTIVE_TASK_STATUSES
+                    and bool(comparison_task.provider_run_id)
+                )
+                if comparison_task is None:
+                    comparison_task = AgentTaskState(
+                        agent_name="product_comparison",
+                        status=TaskStatus.running,
+                        input_payload={"product_url": product_url},
+                        started_at=utc_now(),
+                    )
+                    task_log.append(comparison_task)
+                elif not should_resume:
+                    self._prepare_task_for_retry(comparison_task)
+
+                report.raw_agent_outputs = task_log
+                report.summary = comparison_summary
+                report.error = None
+                investigation.status = InvestigationStatus.running
+                await self._save_report_progress(investigation, report_index, report)
+
+                if should_resume:
+                    comparison, comparison_raw_output = await self.runtime.run_agent(
+                        lambda candidate=candidate: self.comparison_agent.resume(
+                            source_product,
+                            candidate,
+                            comparison_task.provider_run_id or "",
+                            started_at=comparison_task.started_at,
+                            last_progress_at=comparison_task.last_progress_at,
+                            on_update=lambda run: self._apply_task_update(
+                                investigation,
+                                report_index,
+                                report,
+                                task_log,
+                                comparison_task,
+                                run,
+                                comparison_summary,
+                                (
+                                    f"Comparing candidate {candidate_index} of {len(candidates)}. "
+                                    "TinyFish is still inspecting the listing."
+                                ),
+                            ),
+                        )
+                    )
+                else:
+                    comparison, comparison_raw_output = await self.runtime.run_agent(
+                        lambda candidate=candidate: self._run_with_optional_update(
+                            self.comparison_agent.run,
+                            source_product,
+                            candidate,
+                            on_update=lambda run: self._apply_task_update(
+                                investigation,
+                                report_index,
+                                report,
+                                task_log,
+                                comparison_task,
+                                run,
+                                comparison_summary,
+                                (
+                                    f"Comparing candidate {candidate_index} of {len(candidates)}. "
+                                    "TinyFish is still inspecting the listing."
+                                ),
+                            ),
+                        )
+                    )
+
                 comparison_task.status = TaskStatus.completed
                 comparison_task.provider_status = comparison_raw_output.get("tinyfish_status")
                 comparison_task.provider_run_id = comparison_raw_output.get("tinyfish_run_id")
@@ -299,28 +585,56 @@ class InvestigationOrchestrator:
                 investigation.status = InvestigationStatus.running
                 await self._save_report_progress(investigation, report_index, report)
 
-                evidence_task = AgentTaskState(
-                    agent_name="evidence",
-                    status=TaskStatus.running,
-                    input_payload={"product_url": str(candidate.product_url)},
-                    started_at=utc_now(),
-                )
-                task_log.append(evidence_task)
+            evidence_task = self._find_task(
+                task_log,
+                "evidence",
+                identifier_key="product_url",
+                identifier_value=product_url,
+            )
+            if evidence_task is not None and evidence_task.status == TaskStatus.completed:
+                evidence = self._load_evidence_from_task(evidence_task)
+            else:
+                if evidence_task is None:
+                    evidence_task = AgentTaskState(
+                        agent_name="evidence",
+                        status=TaskStatus.running,
+                        input_payload={"product_url": product_url},
+                        started_at=utc_now(),
+                    )
+                    task_log.append(evidence_task)
+                else:
+                    self._prepare_task_for_retry(evidence_task, clear_provider_state=False)
+
                 report.raw_agent_outputs = task_log
-                report.summary = (
-                    f"Collecting evidence for candidate {candidate_index} of {len(candidates)}."
-                )
+                report.summary = self._evidence_summary(candidate_index, len(candidates))
+                report.error = None
+                investigation.status = InvestigationStatus.running
                 await self._save_report_progress(investigation, report_index, report)
                 evidence = await self.runtime.run_agent(
                     lambda comparison=comparison: self.evidence_agent.run(source_product, comparison)
                 )
-                comparison.evidence = evidence
                 evidence_task.status = TaskStatus.completed
                 evidence_task.output_payload = {"evidence": [item.model_dump() for item in evidence]}
                 evidence_task.completed_at = utc_now()
-                comparisons.append(comparison)
                 await self._save_report_progress(investigation, report_index, report)
 
+            comparison.evidence = evidence
+            comparisons.append(comparison)
+        return comparisons
+
+    async def _ensure_ranking(
+        self,
+        investigation: InvestigationResponse,
+        report_index: int,
+        report: InvestigationReport,
+        task_log: list[AgentTaskState],
+        comparisons: list[ComparisonResult],
+    ) -> list[ComparisonResult]:
+        ranking_task = self._find_task(task_log, "ranking")
+        if ranking_task is not None and ranking_task.status == TaskStatus.completed:
+            return report.top_matches
+
+        if ranking_task is None:
             ranking_task = AgentTaskState(
                 agent_name="ranking",
                 status=TaskStatus.running,
@@ -328,19 +642,38 @@ class InvestigationOrchestrator:
                 started_at=utc_now(),
             )
             task_log.append(ranking_task)
-            report.raw_agent_outputs = task_log
-            report.summary = "Ranking suspicious listings."
-            investigation.status = InvestigationStatus.running
-            await self._save_report_progress(investigation, report_index, report)
-            top_matches = await self.runtime.run_agent(lambda: self.ranking_agent.run(comparisons))
-            ranking_task.status = TaskStatus.completed
-            ranking_task.output_payload = {"ranked_product_urls": [str(item.product_url) for item in top_matches]}
-            ranking_task.completed_at = utc_now()
-            report.top_matches = top_matches
-            report.summary = "Writing the final investigation summary."
-            investigation.status = InvestigationStatus.running
-            await self._save_report_progress(investigation, report_index, report)
+        else:
+            self._prepare_task_for_retry(ranking_task, clear_provider_state=False)
 
+        report.raw_agent_outputs = task_log
+        report.summary = "Ranking suspicious listings."
+        report.error = None
+        investigation.status = InvestigationStatus.running
+        await self._save_report_progress(investigation, report_index, report)
+        top_matches = await self.runtime.run_agent(lambda: self.ranking_agent.run(comparisons))
+        ranking_task.status = TaskStatus.completed
+        ranking_task.output_payload = {"ranked_product_urls": [str(item.product_url) for item in top_matches]}
+        ranking_task.completed_at = utc_now()
+        report.top_matches = top_matches
+        report.summary = "Writing the final investigation summary."
+        investigation.status = InvestigationStatus.running
+        await self._save_report_progress(investigation, report_index, report)
+        return top_matches
+
+    async def _ensure_summary(
+        self,
+        investigation: InvestigationResponse,
+        report_index: int,
+        report: InvestigationReport,
+        task_log: list[AgentTaskState],
+        source_product: SourceProduct,
+        top_matches: list[ComparisonResult],
+    ) -> str:
+        summary_task = self._find_task(task_log, "research_summary")
+        if summary_task is not None and summary_task.status == TaskStatus.completed:
+            return report.summary
+
+        if summary_task is None:
             summary_task = AgentTaskState(
                 agent_name="research_summary",
                 status=TaskStatus.running,
@@ -348,23 +681,84 @@ class InvestigationOrchestrator:
                 started_at=utc_now(),
             )
             task_log.append(summary_task)
-            report.raw_agent_outputs = task_log
-            await self._save_report_progress(investigation, report_index, report)
-            summary = await self.runtime.run_agent(lambda: self.summary_agent.run(source_product, top_matches))
-            summary_task.status = TaskStatus.completed
-            summary_task.output_payload = {"summary": summary}
-            summary_task.completed_at = utc_now()
-            report.summary = summary
-            report.raw_agent_outputs = task_log
-            investigation.status = InvestigationStatus.running
-            await self._save_report_progress(investigation, report_index, report)
+        else:
+            self._prepare_task_for_retry(summary_task, clear_provider_state=False)
+
+        report.raw_agent_outputs = task_log
+        report.error = None
+        investigation.status = InvestigationStatus.running
+        await self._save_report_progress(investigation, report_index, report)
+        summary = await self.runtime.run_agent(lambda: self.summary_agent.run(source_product, top_matches))
+        summary_task.status = TaskStatus.completed
+        summary_task.output_payload = {"summary": summary}
+        summary_task.completed_at = utc_now()
+        report.summary = summary
+        report.raw_agent_outputs = task_log
+        investigation.status = InvestigationStatus.running
+        await self._save_report_progress(investigation, report_index, report)
+        return summary
+
+    async def _run_for_source(
+        self,
+        investigation: InvestigationResponse,
+        report_index: int,
+        source_url: str,
+        comparison_sites: list[str],
+        max_candidates_per_site: int,
+    ) -> InvestigationReport:
+        report = investigation.reports[report_index]
+        task_log = report.raw_agent_outputs
+        source_product = self._load_source_product(report, task_log)
+        try:
+            search_summary = self._search_summary(comparison_sites)
+            source_product = await self._ensure_source_product(
+                investigation,
+                report_index,
+                report,
+                task_log,
+                source_url,
+                search_summary,
+            )
+            candidates = await self._ensure_candidates(
+                investigation,
+                report_index,
+                report,
+                task_log,
+                source_product,
+                comparison_sites,
+                max_candidates_per_site,
+                search_summary,
+            )
+            comparisons = await self._ensure_comparisons(
+                investigation,
+                report_index,
+                report,
+                task_log,
+                source_product,
+                candidates,
+            )
+            top_matches = await self._ensure_ranking(
+                investigation,
+                report_index,
+                report,
+                task_log,
+                comparisons,
+            )
+            await self._ensure_summary(
+                investigation,
+                report_index,
+                report,
+                task_log,
+                source_product,
+                top_matches,
+            )
             return report
         except Exception as exc:
             active_task = next(
                 (
                     task
                     for task in reversed(task_log)
-                    if task.status in {TaskStatus.running, TaskStatus.delayed}
+                    if task.status in self.ACTIVE_TASK_STATUSES
                 ),
                 None,
             )

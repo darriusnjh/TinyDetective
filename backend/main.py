@@ -44,6 +44,16 @@ orchestrator = InvestigationOrchestrator(store=store)
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
 
+async def recover_unfinished_investigations() -> None:
+    for investigation in await store.list_active():
+        asyncio.create_task(orchestrator.run_investigation(investigation.investigation_id))
+
+
+@app.on_event("startup")
+async def startup() -> None:
+    await recover_unfinished_investigations()
+
+
 @app.get("/", include_in_schema=False)
 async def index() -> FileResponse:
     return FileResponse(FRONTEND_DIR / "index.html")

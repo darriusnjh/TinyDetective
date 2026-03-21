@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 from typing import Any
 from urllib.parse import urlparse
 
@@ -25,6 +26,46 @@ class TinyFishComparisonSiteAdapter:
         on_update: Callable[[TinyFishRun], Awaitable[None] | None] | None = None,
     ) -> tuple[list[CandidateProduct], dict[str, Any]]:
         marketplace = self._marketplace_name(comparison_site)
+        run = await self.client.run_json(
+            comparison_site,
+            self._search_goal(source_product, top_n),
+            on_update=on_update,
+        )
+        result = self._coerce_result_object(run)
+        candidates = [
+            CandidateProduct.model_validate({**candidate, "marketplace": candidate.get("marketplace") or marketplace})
+            for candidate in result.get("candidates", [])
+            if candidate.get("product_url")
+        ]
+        return candidates[:top_n], self._raw_output(run)
+
+    async def resume_search(
+        self,
+        source_product: SourceProduct,
+        comparison_site: str,
+        run_id: str,
+        top_n: int = 3,
+        on_update: Callable[[TinyFishRun], Awaitable[None] | None] | None = None,
+        started_at: datetime | None = None,
+        last_progress_at: datetime | None = None,
+    ) -> tuple[list[CandidateProduct], dict[str, Any]]:
+        marketplace = self._marketplace_name(comparison_site)
+        run = await self.client.wait_for_run(
+            run_id,
+            on_update=on_update,
+            started_at=started_at,
+            last_progress_at=last_progress_at,
+        )
+        result = self._coerce_result_object(run)
+        candidates = [
+            CandidateProduct.model_validate({**candidate, "marketplace": candidate.get("marketplace") or marketplace})
+            for candidate in result.get("candidates", [])
+            if candidate.get("product_url")
+        ]
+        return candidates[:top_n], self._raw_output(run)
+
+    @staticmethod
+    def _search_goal(source_product: SourceProduct, top_n: int) -> str:
         goal = (
             f"You are investigating counterfeit or suspicious product listings. Search this marketplace or store "
             f"for up to {top_n} candidate listings that may match the official source product. "
@@ -39,14 +80,7 @@ class TinyFishComparisonSiteAdapter:
             '"description":"","image_urls":[]}]} '
             "Only include real listing URLs found on this site. Do not fabricate listings."
         )
-        run = await self.client.run_json(comparison_site, goal, on_update=on_update)
-        result = self._coerce_result_object(run)
-        candidates = [
-            CandidateProduct.model_validate({**candidate, "marketplace": candidate.get("marketplace") or marketplace})
-            for candidate in result.get("candidates", [])
-            if candidate.get("product_url")
-        ]
-        return candidates[:top_n], self._raw_output(run)
+        return goal
 
     async def fetch_candidate_product(
         self,
@@ -54,6 +88,34 @@ class TinyFishComparisonSiteAdapter:
         marketplace: str,
         on_update: Callable[[TinyFishRun], Awaitable[None] | None] | None = None,
     ) -> tuple[CandidateProduct, dict[str, Any]]:
+        run = await self.client.run_json(candidate_url, self._candidate_goal(), on_update=on_update)
+        result = self._coerce_result_object(run)
+        result["product_url"] = candidate_url
+        result["marketplace"] = marketplace
+        return CandidateProduct.model_validate(result), self._raw_output(run)
+
+    async def resume_candidate_product(
+        self,
+        candidate_url: str,
+        marketplace: str,
+        run_id: str,
+        on_update: Callable[[TinyFishRun], Awaitable[None] | None] | None = None,
+        started_at: datetime | None = None,
+        last_progress_at: datetime | None = None,
+    ) -> tuple[CandidateProduct, dict[str, Any]]:
+        run = await self.client.wait_for_run(
+            run_id,
+            on_update=on_update,
+            started_at=started_at,
+            last_progress_at=last_progress_at,
+        )
+        result = self._coerce_result_object(run)
+        result["product_url"] = candidate_url
+        result["marketplace"] = marketplace
+        return CandidateProduct.model_validate(result), self._raw_output(run)
+
+    @staticmethod
+    def _candidate_goal() -> str:
         goal = (
             "Visit this product listing page and extract structured product data for counterfeit research. "
             "Return valid JSON only with this exact shape: "
@@ -61,11 +123,7 @@ class TinyFishComparisonSiteAdapter:
             '"material":"","model":"","sku":"","description":"","image_urls":[]} '
             "Use null for unknown scalar values and [] for unknown lists. Do not invent values."
         )
-        run = await self.client.run_json(candidate_url, goal, on_update=on_update)
-        result = self._coerce_result_object(run)
-        result["product_url"] = candidate_url
-        result["marketplace"] = marketplace
-        return CandidateProduct.model_validate(result), self._raw_output(run)
+        return goal
 
     @staticmethod
     def _coerce_result_object(run: TinyFishRun) -> dict[str, Any]:

@@ -49,6 +49,19 @@ class TinyFishClient:
         on_update: TinyFishRunUpdateCallback | None = None,
     ) -> TinyFishRun:
         run_id = await self.start_run(url, goal)
+        if on_update is not None:
+            queued_at = datetime.now(timezone.utc)
+            maybe_awaitable = on_update(
+                TinyFishRun(
+                    run_id=run_id,
+                    status="QUEUED",
+                    elapsed_seconds=0.0,
+                    last_heartbeat_at=queued_at,
+                    last_progress_at=queued_at,
+                )
+            )
+            if asyncio.iscoroutine(maybe_awaitable):
+                await maybe_awaitable
         return await self.wait_for_run(run_id, on_update=on_update)
 
     async def start_run(self, url: str, goal: str) -> str:
@@ -80,12 +93,16 @@ class TinyFishClient:
         self,
         run_id: str,
         on_update: TinyFishRunUpdateCallback | None = None,
+        started_at: datetime | None = None,
+        last_progress_at: datetime | None = None,
     ) -> TinyFishRun:
-        started_mono = time.monotonic()
-        last_heartbeat_mono = started_mono
-        last_progress_mono = started_mono
-        heartbeat_at = datetime.now(timezone.utc)
-        progress_at = heartbeat_at
+        now_utc = datetime.now(timezone.utc)
+        now_mono = time.monotonic()
+        started_mono = now_mono - self._elapsed_seconds_since(started_at, now_utc)
+        last_heartbeat_mono = now_mono
+        last_progress_mono = now_mono - self._elapsed_seconds_since(last_progress_at, now_utc)
+        heartbeat_at = now_utc
+        progress_at = last_progress_at or heartbeat_at
         last_fingerprint: str | None = None
 
         while True:
@@ -132,6 +149,12 @@ class TinyFishClient:
             if status in {"FAILED", "CANCELLED"}:
                 raise TinyFishError(f"TinyFish run {run_id} ended with status {status}: {run.error}")
             await asyncio.sleep(settings.tinyfish_poll_interval_seconds)
+
+    @staticmethod
+    def _elapsed_seconds_since(timestamp: datetime | None, now: datetime) -> float:
+        if timestamp is None:
+            return 0.0
+        return max(0.0, (now - timestamp).total_seconds())
 
     async def get_run(self, run_id: str) -> TinyFishRun:
         response = await asyncio.to_thread(

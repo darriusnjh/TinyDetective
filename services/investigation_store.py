@@ -127,6 +127,24 @@ class InvestigationStore:
         if cursor.rowcount == 0:
             raise KeyError(item.investigation_id)
 
+    def _list_active_sync(self) -> list[InvestigationResponse]:
+        active_statuses = (
+            InvestigationStatus.queued.value,
+            InvestigationStatus.running.value,
+            InvestigationStatus.delayed.value,
+        )
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT response_json
+                FROM investigations
+                WHERE status IN (?, ?, ?)
+                ORDER BY created_at ASC
+                """,
+                active_statuses,
+            ).fetchall()
+        return [InvestigationResponse.model_validate_json(row["response_json"]) for row in rows]
+
     async def create(self, payload: InvestigationCreateRequest) -> InvestigationResponse:
         async with self._lock:
             return await asyncio.to_thread(self._create_sync, payload)
@@ -143,3 +161,7 @@ class InvestigationStore:
         async with self._lock:
             item.updated_at = utc_now()
             await asyncio.to_thread(self._save_sync, item)
+
+    async def list_active(self) -> list[InvestigationResponse]:
+        async with self._lock:
+            return await asyncio.to_thread(self._list_active_sync)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 from typing import Any
 
 from adapters.comparison_site_adapter import TinyFishComparisonSiteAdapter
@@ -27,17 +28,73 @@ class ProductComparisonAgent:
         candidate: CandidateProduct,
         on_update: Callable[[TinyFishRun], Awaitable[None] | None] | None = None,
     ) -> tuple[ComparisonResult, dict[str, Any]]:
+        candidate_full, raw_output = await self._fetch_candidate(candidate, on_update=on_update)
+        return self._build_result(source_product, candidate_full), raw_output
+
+    async def resume(
+        self,
+        source_product: SourceProduct,
+        candidate: CandidateProduct,
+        run_id: str,
+        on_update: Callable[[TinyFishRun], Awaitable[None] | None] | None = None,
+        started_at: datetime | None = None,
+        last_progress_at: datetime | None = None,
+    ) -> tuple[ComparisonResult, dict[str, Any]]:
+        candidate_full, raw_output = await self._resume_candidate(
+            candidate,
+            run_id,
+            on_update=on_update,
+            started_at=started_at,
+            last_progress_at=last_progress_at,
+        )
+        return self._build_result(source_product, candidate_full), raw_output
+
+    async def _fetch_candidate(
+        self,
+        candidate: CandidateProduct,
+        on_update: Callable[[TinyFishRun], Awaitable[None] | None] | None = None,
+    ) -> tuple[CandidateProduct, dict[str, Any]]:
         if on_update is None:
-            candidate_full, raw_output = await self.adapter.fetch_candidate_product(
+            return await self.adapter.fetch_candidate_product(
                 str(candidate.product_url),
                 candidate.marketplace,
             )
-        else:
-            candidate_full, raw_output = await self.adapter.fetch_candidate_product(
+        return await self.adapter.fetch_candidate_product(
+            str(candidate.product_url),
+            candidate.marketplace,
+            on_update=on_update,
+        )
+
+    async def _resume_candidate(
+        self,
+        candidate: CandidateProduct,
+        run_id: str,
+        on_update: Callable[[TinyFishRun], Awaitable[None] | None] | None = None,
+        started_at: datetime | None = None,
+        last_progress_at: datetime | None = None,
+    ) -> tuple[CandidateProduct, dict[str, Any]]:
+        if on_update is None:
+            return await self.adapter.resume_candidate_product(
                 str(candidate.product_url),
                 candidate.marketplace,
-                on_update=on_update,
+                run_id,
+                started_at=started_at,
+                last_progress_at=last_progress_at,
             )
+        return await self.adapter.resume_candidate_product(
+            str(candidate.product_url),
+            candidate.marketplace,
+            run_id,
+            on_update=on_update,
+            started_at=started_at,
+            last_progress_at=last_progress_at,
+        )
+
+    def _build_result(
+        self,
+        source_product: SourceProduct,
+        candidate_full: CandidateProduct,
+    ) -> ComparisonResult:
         comparisons = {
             "brand": self._eq(source_product.brand, candidate_full.brand),
             "title": self._contains(source_product.product_name, candidate_full.title),
@@ -104,7 +161,7 @@ class ProductComparisonAgent:
             reason=reason,
             candidate_product=candidate_full,
         )
-        return comparison, raw_output
+        return comparison
 
     @staticmethod
     def _eq(left: str | None, right: str | None) -> float:
