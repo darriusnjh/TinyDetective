@@ -220,6 +220,25 @@ class InvestigationOrchestrator:
             is not None
         )
 
+    @staticmethod
+    def _investigation_has_failure(reports: list[InvestigationReport]) -> bool:
+        for report in reports:
+            if report.error is not None:
+                return True
+            if any(task.status == TaskStatus.failed for task in report.raw_agent_outputs):
+                return True
+        return False
+
+    @staticmethod
+    def _investigation_failure_message(reports: list[InvestigationReport]) -> str | None:
+        for report in reports:
+            if report.error:
+                return report.error
+            failed_task = next((task for task in report.raw_agent_outputs if task.status == TaskStatus.failed), None)
+            if failed_task and failed_task.error:
+                return failed_task.error
+        return None
+
     async def _apply_task_update(
         self,
         investigation: InvestigationResponse,
@@ -277,7 +296,11 @@ class InvestigationOrchestrator:
                     request.max_candidates_per_site,
                 )
                 investigation.reports[report_index] = report
-            investigation.status = InvestigationStatus.completed
+            if self._investigation_has_failure(investigation.reports):
+                investigation.status = InvestigationStatus.failed
+                investigation.error = self._investigation_failure_message(investigation.reports)
+            else:
+                investigation.status = InvestigationStatus.completed
         except Exception as exc:  # pragma: no cover
             investigation.status = InvestigationStatus.failed
             investigation.error = str(exc)
@@ -856,4 +879,3 @@ class InvestigationOrchestrator:
             report.error = str(exc)
             await self._save_report_progress(investigation, report_index, report)
             return report
-

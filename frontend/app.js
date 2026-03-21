@@ -2100,6 +2100,62 @@ function startNewInvestigation() {
   sourceUrlsInput.focus();
 }
 
+function returnToPromptAfterFailure(message) {
+  clearPersistedInvestigationId();
+  latestInvestigationPayload = null;
+  resetReportScene();
+  setSubmitting(false);
+  setStatus("idle");
+  setPhase("prompt");
+  renderEmptyState(
+    message || "The investigation failed. Review the saved runs menu to inspect the failed attempt."
+  );
+  sourceUrlsInput.focus();
+}
+
+function investigationHasFailure(payload) {
+  if (!payload) {
+    return false;
+  }
+
+  if (String(payload.status || "").toLowerCase() === "failed" || payload.error) {
+    return true;
+  }
+
+  return (payload.reports || []).some((report) => {
+    if (report.error) {
+      return true;
+    }
+
+    return (report.raw_agent_outputs || []).some((task) => String(task.status || "").toLowerCase() === "failed");
+  });
+}
+
+function getInvestigationFailureMessage(payload) {
+  if (!payload) {
+    return "The investigation failed. Review the saved runs menu to inspect the failed attempt.";
+  }
+
+  if (payload.error) {
+    return payload.error;
+  }
+
+  for (const report of payload.reports || []) {
+    if (report.error) {
+      return report.error;
+    }
+
+    const failedTask = (report.raw_agent_outputs || []).find(
+      (task) => String(task.status || "").toLowerCase() === "failed"
+    );
+    if (failedTask?.error) {
+      return failedTask.error;
+    }
+  }
+
+  return "The investigation failed. Review the saved runs menu to inspect the failed attempt.";
+}
+
 function getPersistedInvestigationId() {
   try {
     return window.localStorage.getItem(persistedInvestigationStorageKey);
@@ -3386,24 +3442,18 @@ async function fetchInvestigation(investigationId) {
       window.clearTimeout(pollTimer);
       refreshPastRuns();
     }
+
+    if (investigationHasFailure(payload)) {
+      returnToPromptAfterFailure(getInvestigationFailureMessage(payload));
+    }
   } catch (error) {
     if (pollTimer) {
       window.clearTimeout(pollTimer);
     }
     latestInvestigationPayload = null;
     resetReportScene();
-    setPhase("progress");
-    setStatus("failed");
-    const stepStates = Object.fromEntries(progressStepDefinitions.map((step) => [step.key, "failed"]));
-    updateProgressUI({
-      overview: "Progress unavailable",
-      detail: error.message,
-      percent: 0,
-      stepStates,
-    });
-    renderTimeline(null);
-    renderEmptyState("The investigation state could not be refreshed. Try again in a moment.");
     updateGenerateReportButton(null);
+    returnToPromptAfterFailure(error.message || "The investigation state could not be refreshed.");
   }
 }
 
