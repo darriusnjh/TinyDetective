@@ -5,6 +5,7 @@ const resultsNode = document.getElementById("results");
 const statusPill = document.getElementById("status-pill");
 const progressText = document.getElementById("progress-text");
 const configNote = document.getElementById("config-note");
+const activityLogNode = document.getElementById("activity-log");
 const reportTemplate = document.getElementById("report-template");
 const matchTemplate = document.getElementById("match-template");
 
@@ -19,6 +20,31 @@ function parseLines(value) {
 
 function setStatus(status) {
   statusPill.textContent = status;
+}
+
+function renderActivityLog(entries) {
+  if (!entries || entries.length === 0) {
+    activityLogNode.innerHTML = '<p class="empty-state">No agent activity yet.</p>';
+    return;
+  }
+  activityLogNode.innerHTML = entries
+    .slice()
+    .reverse()
+    .map(
+      (entry) => `
+        <div class="activity-item">
+          <strong>${entry.agent_name}</strong>${entry.message}<br />
+          <span>${new Date(entry.timestamp).toLocaleTimeString()}</span>
+          ${entry.source_url ? `<br /><span>${entry.source_url}</span>` : ""}
+          ${
+            entry.metadata && Object.keys(entry.metadata).length > 0
+              ? `<div class="activity-meta">${JSON.stringify(entry.metadata)}</div>`
+              : ""
+          }
+        </div>
+      `
+    )
+    .join("");
 }
 
 function formatSourceProduct(product, error) {
@@ -115,6 +141,7 @@ async function fetchInvestigation(investigationId) {
   const payload = await response.json();
   setStatus(payload.status);
   progressText.textContent = `Investigation ${payload.investigation_id} is currently ${payload.status}.`;
+  renderActivityLog(payload.activity_log || []);
   renderResults(payload);
 
   if (payload.status === "queued" || payload.status === "running") {
@@ -132,6 +159,7 @@ form.addEventListener("submit", async (event) => {
   resultsNode.innerHTML = "";
   progressText.textContent = "Submitting investigation request.";
   setStatus("queued");
+  renderActivityLog([]);
 
   const response = await fetch("/investigate", {
     method: "POST",
@@ -144,6 +172,7 @@ form.addEventListener("submit", async (event) => {
 
 resultsNode.innerHTML =
   '<p class="empty-state">Enter source product URLs and run the live TinyFish-backed investigation.</p>';
+renderActivityLog([]);
 
 fetch("/config")
   .then((response) => response.json())
@@ -158,6 +187,9 @@ fetch("/config")
       if (!comparisonSitesInput.value.trim()) {
         comparisonSitesInput.value = (config.ecommerce_store_urls || []).join("\n");
       }
+    }
+    if (config.log_path) {
+      lines.push(`Backend log file: ${config.log_path}`);
     }
     configNote.textContent = lines.join(" | ") || "No .env configuration loaded yet.";
   })

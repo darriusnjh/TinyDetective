@@ -152,7 +152,8 @@ button:hover {
 .score-grid,
 .signals,
 .evidence-list,
-.agent-log-content {
+.agent-log-content,
+.activity-log {
   display: grid;
   gap: 10px;
 }
@@ -190,10 +191,30 @@ button:hover {
 .score-chip,
 .signal,
 .evidence-item,
-.agent-log-item {
+.agent-log-item,
+.activity-item {
   border-radius: 16px;
   padding: 12px 14px;
   background: rgba(242, 238, 230, 0.9);
+}
+
+.activity-log {
+  margin-top: 16px;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.activity-item strong {
+  display: inline-block;
+  margin-right: 8px;
+}
+
+.activity-meta {
+  margin-top: 6px;
+  color: rgba(23, 20, 19, 0.68);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  word-break: break-word;
 }
 
 .report-source {
