@@ -53,4 +53,6 @@ If `comparison_sites` is omitted from `POST /investigate`, the backend falls bac
 - Persistence is currently in-memory and resets on restart.
 - TinyFish calls are made through `services/tinyfish_client.py`, which uses the documented async run and run-status endpoints.
 - `services/tinyfish_runtime.py` keeps orchestration logic separate from execution flow.
-- The UI exposes extracted source data, ranked results, evidence, suspicious signals, and raw agent reasoning.
+- The UI now exposes live agent activity while an investigation is running.
+- Backend agent activity is also written to `logs/tinydetective.log`.
+- The investigation no longer enforces an overall TinyFish run timeout. If you need to disable per-request HTTP timeouts as well, set `TINYFISH_HTTP_TIMEOUT_SECONDS=0`.
