@@ -2313,6 +2313,12 @@ function upsertPastRunFromInvestigation(payload) {
     investigation_id: payload.investigation_id,
     status: payload.status,
     primary_source_url: payload.reports?.[0]?.source_url || existingRun?.primary_source_url || null,
+    primary_source_title:
+      payload.reports?.[0]?.extracted_source_product?.product_name ||
+      payload.reports?.[0]?.extracted_source_product?.model ||
+      payload.reports?.[0]?.extracted_source_product?.brand ||
+      existingRun?.primary_source_title ||
+      null,
     source_count: payload.reports?.length || existingRun?.source_count || 0,
     error: payload.error || null,
     created_at: payload.created_at,
