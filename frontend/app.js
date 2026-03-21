@@ -2,6 +2,7 @@ const form = document.getElementById("investigation-form");
 const sourceUrlsInput = document.getElementById("source-urls");
 const comparisonSitesInput = document.getElementById("comparison-sites");
 const resultsNode = document.getElementById("results");
+const pastRunsNode = document.getElementById("past-runs");
 const statusPill = document.getElementById("status-pill");
 const progressText = document.getElementById("progress-text");
 const progressOverview = document.getElementById("progress-overview");
@@ -13,6 +14,8 @@ const matchTemplate = document.getElementById("match-template");
 const runButton = document.getElementById("run-button");
 
 let pollTimer = null;
+let currentInvestigationId = null;
+let pastRunsCache = [];
 const defaultRunButtonLabel = runButton.textContent;
 const persistedInvestigationStorageKey = "tinydetective:last-investigation-id";
 const progressStepDefinitions = [
@@ -89,6 +92,219 @@ function clearPersistedInvestigationId() {
     window.localStorage.removeItem(persistedInvestigationStorageKey);
   } catch {
     // Ignore local storage failures and keep the live in-memory flow working.
+  }
+  currentInvestigationId = null;
+  renderPastRuns(pastRunsCache);
+}
+
+function selectInvestigation(investigationId) {
+  currentInvestigationId = investigationId;
+  persistInvestigationId(investigationId);
+  renderPastRuns(pastRunsCache);
+}
+
+function loadInvestigation(investigationId) {
+  if (!investigationId) {
+    return;
+  }
+  if (pollTimer) {
+    window.clearTimeout(pollTimer);
+  }
+  selectInvestigation(investigationId);
+  fetchInvestigation(investigationId);
+}
+
+function sortMatchesByCounterfeitRisk(matches) {
+  return [...(matches || [])].sort((left, right) => {
+    const riskDelta = (right.counterfeit_risk_score || 0) - (left.counterfeit_risk_score || 0);
+    if (riskDelta !== 0) {
+      return riskDelta;
+    }
+    return (right.match_score || 0) - (left.match_score || 0);
+  });
+}
+
+function sortPastRuns(runs) {
+  return [...runs].sort((left, right) => {
+    const leftTime = new Date(left.created_at).getTime();
+    const rightTime = new Date(right.created_at).getTime();
+    return rightTime - leftTime;
+  });
+}
+
+function formatRunTimestamp(value) {
+  if (!value) {
+    return "Unknown time";
+  }
+
+  const timestamp = new Date(value);
+  if (Number.isNaN(timestamp.getTime())) {
+    return "Unknown time";
+  }
+
+  return timestamp.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function formatRunSource(sourceUrl) {
+  if (!sourceUrl) {
+    return {
+      title: "Investigation",
+      detail: "No source URL saved",
+      full: "",
+    };
+  }
+
+  try {
+    const url = new URL(sourceUrl);
+    const pathname = decodeURIComponent(url.pathname || "/").replace(/\/$/, "") || "/";
+    return {
+      title: url.hostname.replace(/^www\./, ""),
+      detail: pathname === "/" ? "Homepage" : pathname,
+      full: url.toString(),
+    };
+  } catch {
+    return {
+      title: sourceUrl,
+      detail: "",
+      full: sourceUrl,
+    };
+  }
+}
+
+function formatRunMeta(run, source) {
+  if (run.error) {
+    return run.error;
+  }
+
+  const parts = [];
+  if (source.detail) {
+    parts.push(source.detail);
+  }
+  parts.push(`${run.source_count || 0} source${run.source_count === 1 ? "" : "s"}`);
+  return parts.join(" · ");
+}
+
+function createPastRunItem(run) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "past-run-item";
+  button.dataset.investigationId = run.investigation_id;
+
+  const header = document.createElement("div");
+  header.className = "past-run-header";
+
+  const status = document.createElement("span");
+  status.className = "past-run-status";
+  status.dataset.status = String(run.status || "queued").toLowerCase();
+
+  const time = document.createElement("span");
+  time.className = "past-run-time";
+
+  header.append(status, time);
+
+  const title = document.createElement("strong");
+  title.className = "past-run-title";
+
+  const meta = document.createElement("span");
+  meta.className = "past-run-meta";
+
+  button.append(header, title, meta);
+  return button;
+}
+
+function renderPastRuns(runs) {
+  if (!pastRunsNode) {
+    return;
+  }
+
+  if (!runs || runs.length === 0) {
+    pastRunsNode.innerHTML = '<p class="empty-state">No saved investigations yet.</p>';
+    return;
+  }
+
+  const existingItems = new Map(
+    [...pastRunsNode.querySelectorAll(".past-run-item")].map((node) => [node.dataset.investigationId, node])
+  );
+
+  runs.forEach((run) => {
+    const investigationId = run.investigation_id;
+    const source = formatRunSource(run.primary_source_url);
+
+    let item = existingItems.get(investigationId);
+    if (!item) {
+      item = createPastRunItem(run);
+    } else {
+      existingItems.delete(investigationId);
+    }
+
+    item.classList.toggle("is-active", investigationId === currentInvestigationId);
+    item.setAttribute("aria-pressed", investigationId === currentInvestigationId ? "true" : "false");
+    item.title = source.full || source.title;
+    item.querySelector(".past-run-status").dataset.status = String(run.status || "queued").toLowerCase();
+    setTextContent(
+      item.querySelector(".past-run-status"),
+      statusLabels[String(run.status || "queued").toLowerCase()] || run.status
+    );
+    setTextContent(item.querySelector(".past-run-time"), formatRunTimestamp(run.created_at));
+    setTextContent(item.querySelector(".past-run-title"), source.title);
+    item.querySelector(".past-run-meta").dataset.tone = run.error ? "error" : "default";
+    setTextContent(item.querySelector(".past-run-meta"), formatRunMeta(run, source));
+
+    pastRunsNode.appendChild(item);
+  });
+
+  existingItems.forEach((node) => node.remove());
+}
+
+function upsertPastRun(run) {
+  const nextRuns = [...pastRunsCache];
+  const existingIndex = nextRuns.findIndex((item) => item.investigation_id === run.investigation_id);
+  if (existingIndex === -1) {
+    nextRuns.push(run);
+  } else {
+    nextRuns[existingIndex] = { ...nextRuns[existingIndex], ...run };
+  }
+  pastRunsCache = sortPastRuns(nextRuns);
+  renderPastRuns(pastRunsCache);
+}
+
+function upsertPastRunFromInvestigation(payload) {
+  const existingRun = pastRunsCache.find((item) => item.investigation_id === payload.investigation_id) || null;
+  const nextRun = {
+    investigation_id: payload.investigation_id,
+    status: payload.status,
+    primary_source_url:
+      payload.reports?.[0]?.source_url || existingRun?.primary_source_url || null,
+    source_count: payload.reports?.length || existingRun?.source_count || 0,
+    error: payload.error || null,
+    created_at: payload.created_at,
+    updated_at: payload.updated_at,
+  };
+  upsertPastRun(nextRun);
+}
+
+async function refreshPastRuns() {
+  if (!pastRunsNode) {
+    return;
+  }
+
+  try {
+    const response = await fetch("/investigations?limit=12");
+    if (!response.ok) {
+      throw new Error("Unable to load investigation history.");
+    }
+    pastRunsCache = sortPastRuns(await response.json());
+    renderPastRuns(pastRunsCache);
+  } catch (error) {
+    if (pastRunsCache.length === 0) {
+      pastRunsNode.innerHTML =
+        '<p class="empty-state">Saved investigations could not be loaded right now.</p>';
+    }
   }
 }
 
@@ -373,7 +589,8 @@ function createReportCard(reportKey) {
 }
 
 function renderMatches(matchesNode, topMatches) {
-  const matchesFingerprint = JSON.stringify(topMatches || []);
+  const sortedMatches = sortMatchesByCounterfeitRisk(topMatches);
+  const matchesFingerprint = JSON.stringify(sortedMatches);
   if (matchesNode.dataset.renderedMatches === matchesFingerprint) {
     return;
   }
@@ -381,12 +598,12 @@ function renderMatches(matchesNode, topMatches) {
   matchesNode.dataset.renderedMatches = matchesFingerprint;
   matchesNode.innerHTML = "";
 
-  if (!topMatches || topMatches.length === 0) {
+  if (!sortedMatches || sortedMatches.length === 0) {
     matchesNode.innerHTML = '<p class="empty-state">No ranked matches were returned.</p>';
     return;
   }
 
-  topMatches.forEach((match) => {
+  sortedMatches.forEach((match) => {
     const matchFragment = matchTemplate.content.cloneNode(true);
     matchFragment.querySelector(".match-header").innerHTML = `
       <strong>${match.marketplace}</strong><br />
@@ -558,7 +775,8 @@ async function fetchInvestigation(investigationId) {
     }
 
     const payload = await response.json();
-    persistInvestigationId(payload.investigation_id);
+    selectInvestigation(payload.investigation_id);
+    upsertPastRunFromInvestigation(payload);
     setStatus(payload.status);
     renderProgressTracking(payload);
     renderResults(payload);
@@ -567,6 +785,7 @@ async function fetchInvestigation(investigationId) {
       pollTimer = window.setTimeout(() => fetchInvestigation(investigationId), 1200);
     } else if (pollTimer) {
       window.clearTimeout(pollTimer);
+      refreshPastRuns();
     }
   } catch (error) {
     if (pollTimer) {
@@ -628,8 +847,8 @@ form.addEventListener("submit", async (event) => {
     }
 
     const payload = await response.json();
-    persistInvestigationId(payload.investigation_id);
-    fetchInvestigation(payload.investigation_id);
+    await refreshPastRuns();
+    loadInvestigation(payload.investigation_id);
   } catch (error) {
     setStatus("failed");
     updateProgressUI({
@@ -644,12 +863,23 @@ form.addEventListener("submit", async (event) => {
   }
 });
 
+if (pastRunsNode) {
+  pastRunsNode.addEventListener("click", (event) => {
+    const button = event.target.closest(".past-run-item");
+    if (!button) {
+      return;
+    }
+    loadInvestigation(button.dataset.investigationId);
+  });
+}
+
 setStatus("idle");
 resetProgressTracking();
 renderEmptyState("Add official product page URLs to compare them against live marketplace listings.");
 
-const persistedInvestigationId = getPersistedInvestigationId();
-if (persistedInvestigationId) {
+currentInvestigationId = getPersistedInvestigationId();
+refreshPastRuns();
+if (currentInvestigationId) {
   setStatus("queued");
   updateProgressUI({
     overview: "Restoring previous investigation",
@@ -660,7 +890,7 @@ if (persistedInvestigationId) {
     ),
   });
   renderEmptyState("Restoring the latest saved investigation state.");
-  fetchInvestigation(persistedInvestigationId);
+  fetchInvestigation(currentInvestigationId);
 }
 
 fetch("/config")
