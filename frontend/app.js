@@ -14,6 +14,7 @@ const runButton = document.getElementById("run-button");
 
 let pollTimer = null;
 const defaultRunButtonLabel = runButton.textContent;
+const persistedInvestigationStorageKey = "tinydetective:last-investigation-id";
 const progressStepDefinitions = [
   { key: "source_extraction", label: "Extract official product details" },
   { key: "candidate_discovery", label: "Search configured marketplaces" },
@@ -65,6 +66,30 @@ function setSubmitting(isSubmitting) {
   runButton.disabled = isSubmitting;
   runButton.setAttribute("aria-busy", String(isSubmitting));
   runButton.textContent = isSubmitting ? "Starting Investigation..." : defaultRunButtonLabel;
+}
+
+function getPersistedInvestigationId() {
+  try {
+    return window.localStorage.getItem(persistedInvestigationStorageKey);
+  } catch {
+    return null;
+  }
+}
+
+function persistInvestigationId(investigationId) {
+  try {
+    window.localStorage.setItem(persistedInvestigationStorageKey, investigationId);
+  } catch {
+    // Ignore local storage failures and keep the live in-memory flow working.
+  }
+}
+
+function clearPersistedInvestigationId() {
+  try {
+    window.localStorage.removeItem(persistedInvestigationStorageKey);
+  } catch {
+    // Ignore local storage failures and keep the live in-memory flow working.
+  }
 }
 
 function renderEmptyState(message) {
@@ -525,10 +550,15 @@ async function fetchInvestigation(investigationId) {
   try {
     const response = await fetch(`/investigation/${investigationId}`);
     if (!response.ok) {
+      if (response.status === 404) {
+        clearPersistedInvestigationId();
+        throw new Error("The saved investigation was not found.");
+      }
       throw new Error("Unable to refresh the investigation state.");
     }
 
     const payload = await response.json();
+    persistInvestigationId(payload.investigation_id);
     setStatus(payload.status);
     renderProgressTracking(payload);
     renderResults(payload);
@@ -598,6 +628,7 @@ form.addEventListener("submit", async (event) => {
     }
 
     const payload = await response.json();
+    persistInvestigationId(payload.investigation_id);
     fetchInvestigation(payload.investigation_id);
   } catch (error) {
     setStatus("failed");
@@ -616,6 +647,21 @@ form.addEventListener("submit", async (event) => {
 setStatus("idle");
 resetProgressTracking();
 renderEmptyState("Add official product page URLs to compare them against live marketplace listings.");
+
+const persistedInvestigationId = getPersistedInvestigationId();
+if (persistedInvestigationId) {
+  setStatus("queued");
+  updateProgressUI({
+    overview: "Restoring previous investigation",
+    detail: "Reloading the latest saved investigation state.",
+    percent: 4,
+    stepStates: Object.fromEntries(
+      progressStepDefinitions.map((step, index) => [step.key, index === 0 ? "queued" : "pending"])
+    ),
+  });
+  renderEmptyState("Restoring the latest saved investigation state.");
+  fetchInvestigation(persistedInvestigationId);
+}
 
 fetch("/config")
   .then((response) => response.json())
