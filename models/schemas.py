@@ -116,7 +116,7 @@ class InvestigationReport(BaseModel):
 class InvestigationCreateRequest(BaseModel):
     source_urls: list[HttpUrl | str]
     comparison_sites: list[HttpUrl | str] = Field(default_factory=list)
-    max_candidates_per_site: int = Field(default=3, ge=1, le=10)
+    max_candidates_per_site: int = Field(default=5, ge=1, le=10)
 
 
 class InvestigationResponse(BaseModel):
@@ -126,3 +126,13 @@ class InvestigationResponse(BaseModel):
     error: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
+
+
+class InvestigationListItem(BaseModel):
+    investigation_id: str
+    status: InvestigationStatus
+    primary_source_url: str | None = None
+    source_count: int = 0
+    error: str | None = None
+    created_at: datetime
+    updated_at: datetime

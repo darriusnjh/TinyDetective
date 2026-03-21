@@ -12,12 +12,12 @@ if __package__ in {None, ""}:
         sys.path.insert(0, str(PROJECT_ROOT))
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from models.schemas import InvestigationCreateRequest, InvestigationResponse
+from models.schemas import InvestigationCreateRequest, InvestigationListItem, InvestigationResponse
 from services.investigation_orchestrator import InvestigationOrchestrator
 from services.settings import settings
 from services.investigation_store import InvestigationStore
@@ -74,6 +74,11 @@ async def config() -> dict[str, object]:
         "ecommerce_store_urls": settings.ecommerce_store_urls,
         "tinyfish_browser_profile": settings.tinyfish_browser_profile,
     }
+
+
+@app.get("/investigations", response_model=list[InvestigationListItem])
+async def list_investigations(limit: int = Query(default=12, ge=1, le=100)) -> list[InvestigationListItem]:
+    return await store.list_recent(limit=limit)
 
 
 @app.post("/investigate", response_model=InvestigationResponse)

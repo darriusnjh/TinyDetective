@@ -7,7 +7,13 @@ import sqlite3
 from pathlib import Path
 from uuid import uuid4
 
-from models.schemas import InvestigationCreateRequest, InvestigationResponse, InvestigationStatus, utc_now
+from models.schemas import (
+    InvestigationCreateRequest,
+    InvestigationListItem,
+    InvestigationResponse,
+    InvestigationStatus,
+    utc_now,
+)
 from services.settings import settings
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -145,6 +151,36 @@ class InvestigationStore:
             ).fetchall()
         return [InvestigationResponse.model_validate_json(row["response_json"]) for row in rows]
 
+    def _list_recent_sync(self, limit: int) -> list[InvestigationListItem]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT investigation_id, status, request_json, response_json, created_at, updated_at
+                FROM investigations
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+
+        items: list[InvestigationListItem] = []
+        for row in rows:
+            request_payload = InvestigationCreateRequest.model_validate_json(row["request_json"])
+            response_payload = InvestigationResponse.model_validate_json(row["response_json"])
+            source_urls = [str(source_url) for source_url in request_payload.source_urls]
+            items.append(
+                InvestigationListItem(
+                    investigation_id=row["investigation_id"],
+                    status=InvestigationStatus(row["status"]),
+                    primary_source_url=source_urls[0] if source_urls else None,
+                    source_count=len(source_urls),
+                    error=response_payload.error,
+                    created_at=response_payload.created_at,
+                    updated_at=response_payload.updated_at,
+                )
+            )
+        return items
+
     async def create(self, payload: InvestigationCreateRequest) -> InvestigationResponse:
         async with self._lock:
             return await asyncio.to_thread(self._create_sync, payload)
@@ -165,3 +201,7 @@ class InvestigationStore:
     async def list_active(self) -> list[InvestigationResponse]:
         async with self._lock:
             return await asyncio.to_thread(self._list_active_sync)
+
+    async def list_recent(self, limit: int = 12) -> list[InvestigationListItem]:
+        async with self._lock:
+            return await asyncio.to_thread(self._list_recent_sync, limit)

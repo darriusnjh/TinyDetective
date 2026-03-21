@@ -41,7 +41,7 @@ class EmptyDiscoveryAgent:
         self,
         source_product: SourceProduct,
         comparison_sites: list[str],
-        top_n: int = 3,
+        top_n: int = 5,
         on_update=None,
     ):
         return [], []
@@ -50,7 +50,7 @@ class EmptyDiscoveryAgent:
         self,
         source_product: SourceProduct,
         comparison_site: str,
-        top_n: int = 3,
+        top_n: int = 5,
         on_update=None,
     ):
         return [], {}
@@ -236,6 +236,33 @@ def test_investigation_store_lists_active_runs(tmp_path) -> None:
 
         assert active.investigation_id in active_ids
         assert completed.investigation_id not in active_ids
+
+    asyncio.run(run())
+
+
+def test_investigation_store_lists_recent_runs_newest_first(tmp_path) -> None:
+    async def run() -> None:
+        store = InvestigationStore(tmp_path / "recent.sqlite3")
+        first = await store.create(
+            InvestigationCreateRequest(
+                source_urls=["https://brand.example/products/first-case"],
+                comparison_sites=["https://shopee.sg/"],
+            )
+        )
+        second = await store.create(
+            InvestigationCreateRequest(
+                source_urls=["https://brand.example/products/second-case"],
+                comparison_sites=["https://shopee.sg/"],
+            )
+        )
+
+        recent_runs = await store.list_recent(limit=10)
+
+        assert [item.investigation_id for item in recent_runs[:2]] == [
+            second.investigation_id,
+            first.investigation_id,
+        ]
+        assert recent_runs[0].primary_source_url == "https://brand.example/products/second-case"
 
     asyncio.run(run())
 

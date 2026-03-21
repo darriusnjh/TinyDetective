@@ -6,7 +6,8 @@ import asyncio
 
 from agents.evidence_agent import EvidenceAgent
 from agents.product_comparison_agent import ProductComparisonAgent
-from models.schemas import CandidateProduct, SourceProduct
+from agents.ranking_agent import RankingAgent
+from models.schemas import CandidateProduct, ComparisonResult, SourceProduct
 
 
 class StubComparisonAdapter:
@@ -78,5 +79,40 @@ def test_evidence_agent_emits_structured_differences() -> None:
         evidence = await EvidenceAgent().run(source_product, comparison)
         assert any(item.field == "price" for item in evidence)
         assert any(item.field == "brand" for item in evidence)
+
+    asyncio.run(run())
+
+
+def test_ranking_agent_returns_five_matches() -> None:
+    async def run() -> None:
+        source_url = "https://brand.example/products/alpha-case"
+        comparisons = [
+            ComparisonResult(
+                source_url=source_url,
+                product_url=f"https://market.example/listing/{index}",
+                marketplace="Shopee",
+                match_score=0.9 - (index * 0.05),
+                is_exact_match=index < 2,
+                counterfeit_risk_score=0.15 + (index * 0.1),
+                suspicious_signals=[],
+                reason=f"Candidate {index}",
+                candidate_product=CandidateProduct(
+                    product_url=f"https://market.example/listing/{index}",
+                    marketplace="Shopee",
+                ),
+            )
+            for index in range(6)
+        ]
+
+        ranked = await RankingAgent().run(comparisons)
+
+        assert len(ranked) == 5
+        assert [str(item.product_url) for item in ranked] == [
+            "https://market.example/listing/0",
+            "https://market.example/listing/1",
+            "https://market.example/listing/2",
+            "https://market.example/listing/3",
+            "https://market.example/listing/4",
+        ]
 
     asyncio.run(run())

@@ -8,6 +8,8 @@ from models.schemas import ComparisonResult
 class RankingAgent:
     """Rank candidates with precision-oriented heuristics."""
 
+    TOP_MATCH_LIMIT = 5
+
     async def run(self, comparisons: list[ComparisonResult]) -> list[ComparisonResult]:
         ranked = sorted(
             comparisons,
@@ -18,4 +20,4 @@ class RankingAgent:
             ),
             reverse=True,
         )
-        return ranked[:3]
+        return ranked[: self.TOP_MATCH_LIMIT]

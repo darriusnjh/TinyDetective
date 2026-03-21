@@ -14,6 +14,8 @@ from services.tinyfish_client import TinyFishRun
 class CandidateDiscoveryAgent:
     """Find likely marketplace candidates per comparison site."""
 
+    DEFAULT_TOP_N = 5
+
     def __init__(self, adapter: TinyFishComparisonSiteAdapter | None = None) -> None:
         self.adapter = adapter or TinyFishComparisonSiteAdapter()
 
@@ -21,7 +23,7 @@ class CandidateDiscoveryAgent:
         self,
         source_product: SourceProduct,
         comparison_sites: list[str],
-        top_n: int = 3,
+        top_n: int = DEFAULT_TOP_N,
         on_update: Callable[[TinyFishRun], Awaitable[None] | None] | None = None,
     ) -> tuple[list[CandidateProduct], list[dict[str, Any]]]:
         candidates: list[CandidateProduct] = []
@@ -44,7 +46,7 @@ class CandidateDiscoveryAgent:
         self,
         source_product: SourceProduct,
         comparison_site: str,
-        top_n: int = 3,
+        top_n: int = DEFAULT_TOP_N,
         on_update: Callable[[TinyFishRun], Awaitable[None] | None] | None = None,
     ) -> tuple[list[CandidateProduct], dict[str, Any]]:
         if on_update is None:
@@ -56,7 +58,7 @@ class CandidateDiscoveryAgent:
         source_product: SourceProduct,
         comparison_site: str,
         run_id: str,
-        top_n: int = 3,
+        top_n: int = DEFAULT_TOP_N,
         on_update: Callable[[TinyFishRun], Awaitable[None] | None] | None = None,
         started_at: datetime | None = None,
         last_progress_at: datetime | None = None,
