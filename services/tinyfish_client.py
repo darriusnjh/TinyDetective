@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
 from dataclasses import dataclass
 from typing import Any
 from urllib import error, request
@@ -63,8 +62,7 @@ class TinyFishClient:
         return str(run_id)
 
     async def wait_for_run(self, run_id: str) -> TinyFishRun:
-        deadline = time.monotonic() + settings.tinyfish_run_timeout_seconds
-        while time.monotonic() < deadline:
+        while True:
             run = await self.get_run(run_id)
             status = run.status.upper()
             if status == "COMPLETED":
@@ -72,7 +70,6 @@ class TinyFishClient:
             if status in {"FAILED", "CANCELLED"}:
                 raise TinyFishError(f"TinyFish run {run_id} ended with status {status}: {run.error}")
             await asyncio.sleep(settings.tinyfish_poll_interval_seconds)
-        raise TinyFishError(f"TinyFish run {run_id} timed out after waiting for completion.")
 
     async def get_run(self, run_id: str) -> TinyFishRun:
         response = await asyncio.to_thread(
@@ -105,7 +102,8 @@ class TinyFishClient:
             },
         )
         try:
-            with request.urlopen(req, timeout=settings.tinyfish_run_timeout_seconds) as response:
+            timeout = None if settings.tinyfish_http_timeout_seconds <= 0 else settings.tinyfish_http_timeout_seconds
+            with request.urlopen(req, timeout=timeout) as response:
                 return json.loads(response.read().decode("utf-8"))
         except error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")

@@ -51,6 +51,7 @@ class SourceProduct(BaseModel):
 class CandidateProduct(BaseModel):
     product_url: HttpUrl | str
     marketplace: str
+    discovery_queries: list[str] = Field(default_factory=list)
     seller_name: str | None = None
     title: str | None = None
     price: float | None = None
@@ -80,6 +81,9 @@ class ComparisonResult(BaseModel):
     marketplace: str
     match_score: float
     is_exact_match: bool
+    is_official_store: bool = False
+    official_store_confidence: float = 0.0
+    official_store_signals: list[str] = Field(default_factory=list)
     counterfeit_risk_score: float
     suspicious_signals: list[str] = Field(default_factory=list)
     reason: str
@@ -98,10 +102,20 @@ class AgentTaskState(BaseModel):
     completed_at: datetime | None = None
 
 
+class ActivityLogEntry(BaseModel):
+    timestamp: datetime = Field(default_factory=utc_now)
+    level: str = "info"
+    agent_name: str
+    message: str
+    source_url: HttpUrl | str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class InvestigationReport(BaseModel):
     source_url: HttpUrl | str
     extracted_source_product: SourceProduct | None = None
     top_matches: list[ComparisonResult] = Field(default_factory=list)
+    excluded_official_store_count: int = 0
     summary: str
     raw_agent_outputs: list[AgentTaskState] = Field(default_factory=list)
     error: str | None = None
@@ -117,6 +131,7 @@ class InvestigationResponse(BaseModel):
     investigation_id: str
     status: InvestigationStatus
     reports: list[InvestigationReport] = Field(default_factory=list)
+    activity_log: list[ActivityLogEntry] = Field(default_factory=list)
     error: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)

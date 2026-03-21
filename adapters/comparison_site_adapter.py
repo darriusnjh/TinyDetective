@@ -20,12 +20,17 @@ class TinyFishComparisonSiteAdapter:
         self,
         source_product: SourceProduct,
         comparison_site: str,
+        search_query: str,
         top_n: int = 3,
     ) -> tuple[list[CandidateProduct], dict[str, Any]]:
         marketplace = self._marketplace_name(comparison_site)
         goal = (
             f"You are investigating counterfeit or suspicious product listings. Search this marketplace or store "
             f"for up to {top_n} candidate listings that may match the official source product. "
+            f"Use this derived search query exactly as your starting point: {search_query!r}. "
+            "This query was derived from the official product analysis step from the source URL. "
+            "Search this site for candidates relevant to that query, then return all useful results you find "
+            "for that query up to the requested limit. "
             f"Official product details: brand={source_product.brand!r}, product_name={source_product.product_name!r}, "
             f"category={source_product.category!r}, subcategory={source_product.subcategory!r}, "
             f"price={source_product.price!r} {source_product.currency!r}, color={source_product.color!r}, "
@@ -40,11 +45,17 @@ class TinyFishComparisonSiteAdapter:
         run = await self.client.run_json(comparison_site, goal)
         result = self._coerce_result_object(run)
         candidates = [
-            CandidateProduct.model_validate({**candidate, "marketplace": candidate.get("marketplace") or marketplace})
+            CandidateProduct.model_validate(
+                {
+                    **candidate,
+                    "marketplace": candidate.get("marketplace") or marketplace,
+                    "discovery_queries": [search_query],
+                }
+            )
             for candidate in result.get("candidates", [])
             if candidate.get("product_url")
         ]
-        return candidates[:top_n], self._raw_output(run)
+        return candidates[:top_n], self._raw_output(run, search_query)
 
     async def fetch_candidate_product(
         self,
@@ -82,9 +93,10 @@ class TinyFishComparisonSiteAdapter:
         return (host.split(".")[0] if host else site).title()
 
     @staticmethod
-    def _raw_output(run: TinyFishRun) -> dict[str, Any]:
+    def _raw_output(run: TinyFishRun, search_query: str | None = None) -> dict[str, Any]:
         return {
             "tinyfish_run_id": run.run_id,
             "tinyfish_status": run.status,
             "tinyfish_result": run.result,
+            "search_query": search_query or "",
         }
