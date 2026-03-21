@@ -1402,7 +1402,7 @@ button.panel-action:active {
   width: 100%;
   height: 100%;
   border: 0;
-  background: color-mix(in oklch, white 92%, var(--bg) 8%);
+  background: #fbf8f2;
 }
 
 .past-runs-list {

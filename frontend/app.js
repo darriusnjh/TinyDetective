@@ -46,7 +46,7 @@ let lastSubmittedSourceUrl = "";
 let activeTimelineStage = "source";
 let latestInvestigationPayload = null;
 let appConfig = null;
-let currentReportPdfUrl = null;
+let currentReportDocumentUrl = null;
 let reportGenerationInFlight = false;
 
 const defaultRunButtonLabel = runButton.textContent;
@@ -282,12 +282,37 @@ function getMatchReasonLines(match) {
 }
 
 function sanitizePlainText(value) {
-  return String(value ?? "")
+  const raw = String(value ?? "");
+  const normalized = typeof raw.normalize === "function" ? raw.normalize("NFKD") : raw;
+
+  return normalized
     .replace(/[\u2018\u2019]/g, "'")
     .replace(/[\u201c\u201d]/g, '"')
     .replace(/[\u2013\u2014]/g, "-")
     .replace(/\u2026/g, "...")
+    .replace(/[\u00b7\u2022]/g, " - ")
     .replace(/\u00a0/g, " ")
+    .replace(/\u2122/g, "(TM)")
+    .replace(/\u00ae/g, "(R)")
+    .replace(/\u00a9/g, "(C)")
+    .replace(/[【〔〖〘［]/g, "[")
+    .replace(/[】〕〗〙］]/g, "]")
+    .replace(/[（]/g, "(")
+    .replace(/[）]/g, ")")
+    .replace(/[：]/g, ":")
+    .replace(/[，]/g, ",")
+    .replace(/[；]/g, ";")
+    .replace(/[／]/g, "/")
+    .replace(/[｜]/g, "|")
+    .replace(/[＋]/g, "+")
+    .replace(/[＝]/g, "=")
+    .replace(/[％]/g, "%")
+    .replace(/[＆]/g, "&")
+    .replace(/[＃]/g, "#")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
+    .replace(/[^\x20-\x7e]/g, " ")
+    .replace(/\s+/g, " ")
     .trim();
 }
 
@@ -411,7 +436,7 @@ function getReportLimitations(report) {
   return gaps;
 }
 
-function buildInvestigationPdf(payload) {
+function buildInvestigationPdfFallback(payload) {
   const jsPdfApi = window.jspdf?.jsPDF;
   if (!jsPdfApi) {
     throw new Error("The PDF renderer is not available in this browser session.");
@@ -426,12 +451,13 @@ function buildInvestigationPdf(payload) {
 
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
-  const margin = 48;
+  const margin = 40;
+  const footerHeight = 24;
   const contentWidth = pageWidth - margin * 2;
   let cursorY = margin;
 
   const ensureSpace = (height = 18) => {
-    if (cursorY + height <= pageHeight - margin) {
+    if (cursorY + height <= pageHeight - margin - footerHeight) {
       return;
     }
     doc.addPage();
@@ -439,42 +465,42 @@ function buildInvestigationPdf(payload) {
   };
 
   const drawRule = () => {
-    ensureSpace(16);
+    ensureSpace(12);
     doc.setDrawColor(204, 198, 188);
-    doc.setLineWidth(0.7);
+    doc.setLineWidth(0.6);
     doc.line(margin, cursorY, pageWidth - margin, cursorY);
-    cursorY += 16;
+    cursorY += 10;
   };
 
   const addKicker = (text) => {
     ensureSpace(12);
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(9);
+    doc.setFontSize(8.5);
     doc.setTextColor(132, 124, 113);
     doc.text(sanitizePlainText(String(text || "").toUpperCase()), margin, cursorY);
-    cursorY += 14;
+    cursorY += 11;
   };
 
   const addHeading = (text, size = 18) => {
-    const lines = doc.splitTextToSize(sanitizePlainText(text), contentWidth);
-    ensureSpace(lines.length * (size + 4));
     doc.setFont("helvetica", "bold");
     doc.setFontSize(size);
     doc.setTextColor(54, 46, 39);
+    const lines = doc.splitTextToSize(sanitizePlainText(text), contentWidth);
+    ensureSpace(lines.length * (size + 2));
     doc.text(lines, margin, cursorY);
-    cursorY += lines.length * (size + 4);
+    cursorY += lines.length * (size + 2);
   };
 
   const addParagraph = (text, options = {}) => {
-    const fontSize = options.fontSize || 11;
-    const lineHeight = options.lineHeight || 16;
-    const lines = doc.splitTextToSize(sanitizePlainText(text), contentWidth);
-    ensureSpace(lines.length * lineHeight + 6);
+    const fontSize = options.fontSize || 9.75;
+    const lineHeight = options.lineHeight || 13.5;
     doc.setFont("helvetica", options.bold ? "bold" : "normal");
     doc.setFontSize(fontSize);
     doc.setTextColor(options.muted ? 110 : 70, options.muted ? 103 : 62, options.muted ? 95 : 54);
+    const lines = doc.splitTextToSize(sanitizePlainText(text), contentWidth);
+    ensureSpace(lines.length * lineHeight + 4);
     doc.text(lines, margin, cursorY);
-    cursorY += lines.length * lineHeight + 6;
+    cursorY += lines.length * lineHeight + 4;
   };
 
   const addBulletList = (items, options = {}) => {
@@ -483,35 +509,66 @@ function buildInvestigationPdf(payload) {
       return;
     }
 
-    const fontSize = options.fontSize || 11;
-    const lineHeight = options.lineHeight || 15;
+    const fontSize = options.fontSize || 9.5;
+    const lineHeight = options.lineHeight || 12.5;
     doc.setFont("helvetica", "normal");
     doc.setFontSize(fontSize);
     doc.setTextColor(70, 62, 54);
 
     values.forEach((item) => {
       const bulletX = margin + 4;
-      const textX = margin + 14;
-      const lines = doc.splitTextToSize(item, contentWidth - 18);
-      ensureSpace(lines.length * lineHeight + 4);
+      const textX = margin + 12;
+      const lines = doc.splitTextToSize(item, contentWidth - 16);
+      ensureSpace(lines.length * lineHeight + 3);
       doc.text("-", bulletX, cursorY);
       doc.text(lines, textX, cursorY);
-      cursorY += lines.length * lineHeight + 4;
+      cursorY += lines.length * lineHeight + 3;
     });
 
-    cursorY += 2;
+    cursorY += 1;
   };
 
-  const addDefinitionList = (rows) => {
+  const addDefinitionList = (rows, options = {}) => {
     const filteredRows = (rows || []).filter(([, value]) => value !== null && value !== undefined && value !== "");
     if (filteredRows.length === 0) {
       return;
     }
 
+    const fontSize = options.fontSize || 9.5;
+    const lineHeight = options.lineHeight || 12.5;
+    const labelWidth = options.labelWidth || 112;
+    const valueX = margin + labelWidth;
+    const valueWidth = contentWidth - labelWidth;
+
     filteredRows.forEach(([label, value]) => {
-      const line = `${sanitizePlainText(label)}: ${sanitizePlainText(value)}`;
-      addParagraph(line, { fontSize: 10.5, lineHeight: 15 });
+      const labelText = sanitizePlainText(label);
+      const valueText = sanitizePlainText(value);
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(fontSize);
+      const labelLines = doc.splitTextToSize(labelText, labelWidth - 10);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(fontSize);
+      const valueLines = doc.splitTextToSize(valueText, valueWidth);
+
+      const rowLineCount = Math.max(labelLines.length, valueLines.length);
+      const rowHeight = rowLineCount * lineHeight + 1;
+      ensureSpace(rowHeight + 1);
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(fontSize);
+      doc.setTextColor(97, 88, 79);
+      doc.text(labelLines, margin, cursorY);
+
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(70, 62, 54);
+      doc.text(valueLines, valueX, cursorY);
+
+      cursorY += rowHeight;
     });
+
+    cursorY += 1;
   };
 
   const addSection = (kicker, heading, body) => {
@@ -527,10 +584,10 @@ function buildInvestigationPdf(payload) {
   const brandWebsite = getBrandWebsite(payload);
 
   addKicker("TinyDetective");
-  addHeading("Counterfeit Research Evidence Dossier", 22);
+  addHeading("Counterfeit Research Evidence Dossier", 20);
   addParagraph(
     "Prepared from the captured TinyDetective investigation outputs for internal review, marketplace complaint preparation, and counsel handoff. This report is an evidence summary, not legal advice.",
-    { fontSize: 11.5, lineHeight: 17 }
+    { fontSize: 10.5, lineHeight: 14.5 }
   );
   addDefinitionList([
     ["Investigation ID", payload?.investigation_id || "Unavailable"],
@@ -538,10 +595,11 @@ function buildInvestigationPdf(payload) {
     ["Created", formatReportDate(payload?.created_at)],
     ["Updated", formatReportDate(payload?.updated_at)],
     ["Brand website", brandWebsite],
-  ]);
+  ], { labelWidth: 106 });
 
   reports.forEach((report, index) => {
     const sourceProduct = report.extracted_source_product || {};
+    const sourceProductFeatures = (sourceProduct.features || []).filter(Boolean);
     const candidateTasks = getCandidateTasks(report);
     const discoveredCandidates = collectDiscoveredCandidates(report);
     const completedComparisons = collectCompletedComparisons(report);
@@ -564,7 +622,7 @@ function buildInvestigationPdf(payload) {
         ["Report summary", report.summary || "No summary returned."],
         ["Report error", report.error || ""],
         ["Official-store exclusions", report.excluded_official_store_count ?? 0],
-      ]);
+      ], { labelWidth: 114 });
     });
 
     addSection(`Source ${index + 1}`, "Official Product Reference", () => {
@@ -581,8 +639,16 @@ function buildInvestigationPdf(payload) {
         ["Color", sourceProduct.color || "Unavailable"],
         ["Size", sourceProduct.size || "Unavailable"],
         ["Material", sourceProduct.material || "Unavailable"],
-        ["Features", (sourceProduct.features || []).join(", ") || "Unavailable"],
       ]);
+
+      if (sourceProductFeatures.length > 0) {
+        addParagraph("Key features", {
+          bold: true,
+          fontSize: 9.5,
+          lineHeight: 12.5,
+        });
+        addBulletList(sourceProductFeatures, { fontSize: 9, lineHeight: 11.5 });
+      }
     });
 
     addSection(`Source ${index + 1}`, "Ranked Listings of Concern", () => {
@@ -596,7 +662,7 @@ function buildInvestigationPdf(payload) {
       rankedListings.slice(0, 5).forEach((match, rankIndex) => {
         addParagraph(
           `#${rankIndex + 1} ${match.candidate_product?.title || match.candidate_product?.model || match.product_url}`,
-          { bold: true, fontSize: 12, lineHeight: 17 }
+          { bold: true, fontSize: 10.5, lineHeight: 13.5 }
         );
         addDefinitionList([
           ["Listing URL", match.product_url],
@@ -604,16 +670,18 @@ function buildInvestigationPdf(payload) {
           ["Seller", match.candidate_product?.seller_name || "Unavailable"],
           ["Risk score", Number(match.counterfeit_risk_score || 0).toFixed(2)],
           ["Match score", Number(match.match_score || 0).toFixed(2)],
-        ]);
+        ], { labelWidth: 96 });
         addParagraph(`Observed rationale: ${match.reason || "No reason returned."}`, {
-          fontSize: 10.5,
-          lineHeight: 15,
+          fontSize: 9.25,
+          lineHeight: 12.5,
         });
         addBulletList(
-          getRiskReasonLines(match).map((line) => `Risk reasoning: ${line}`)
+          getRiskReasonLines(match).map((line) => `Risk reasoning: ${line}`),
+          { fontSize: 9, lineHeight: 11.5 }
         );
         addBulletList(
-          getMatchReasonLines(match).map((line) => `Match reasoning: ${line}`)
+          getMatchReasonLines(match).map((line) => `Match reasoning: ${line}`),
+          { fontSize: 9, lineHeight: 11.5 }
         );
         addBulletList(
           (match.evidence || []).slice(0, 5).map((item) => {
@@ -625,9 +693,9 @@ function buildInvestigationPdf(payload) {
                 : "";
             return `Evidence - ${humanizeFieldName(item.field)}: ${item.note}${sourceValue}${candidateValue}`;
           }),
-          { fontSize: 10, lineHeight: 14 }
+          { fontSize: 8.75, lineHeight: 11.25 }
         );
-        cursorY += 4;
+        cursorY += 2;
       });
     });
 
@@ -720,46 +788,1029 @@ function buildInvestigationPdf(payload) {
     });
   });
 
+  const pageCount = doc.getNumberOfPages();
+  for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
+    doc.setPage(pageNumber);
+    doc.setDrawColor(225, 218, 209);
+    doc.setLineWidth(0.5);
+    doc.line(margin, pageHeight - margin + 2, pageWidth - margin, pageHeight - margin + 2);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(132, 124, 113);
+    doc.text("TinyDetective dossier", margin, pageHeight - margin + 14);
+    doc.text(`Page ${pageNumber} of ${pageCount}`, pageWidth - margin, pageHeight - margin + 14, {
+      align: "right",
+    });
+  }
+
   return doc.output("blob");
 }
 
-function revokeCurrentReportPdfUrl() {
-  if (!currentReportPdfUrl) {
+function formatReportHtmlValue(value) {
+  return escapeHtml(sanitizePlainText(value));
+}
+
+function renderReportFactGrid(rows) {
+  const filteredRows = (rows || []).filter(([, value]) => value !== null && value !== undefined && value !== "");
+  if (filteredRows.length === 0) {
+    return "";
+  }
+
+  return `
+    <dl class="pdf-report-facts">
+      ${filteredRows
+        .map(
+          ([label, value]) => `
+            <div class="pdf-report-fact">
+              <dt>${formatReportHtmlValue(label)}</dt>
+              <dd>${formatReportHtmlValue(value)}</dd>
+            </div>
+          `
+        )
+        .join("")}
+    </dl>
+  `;
+}
+
+function renderReportListBlock(items, emptyMessage = "", className = "pdf-report-list") {
+  const values = (items || []).map((item) => sanitizePlainText(item)).filter(Boolean);
+  if (values.length === 0) {
+    return emptyMessage
+      ? `<p class="pdf-report-empty">${formatReportHtmlValue(emptyMessage)}</p>`
+      : "";
+  }
+
+  return `
+    <ul class="${className}">
+      ${values.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
+    </ul>
+  `;
+}
+
+function renderReportCard(title, body, options = {}) {
+  const kicker = options.kicker || "Section";
+  return `
+    <article class="pdf-report-card ${options.className || ""}">
+      <p class="pdf-report-card-kicker">${formatReportHtmlValue(kicker)}</p>
+      <h3 class="pdf-report-card-title">${formatReportHtmlValue(title)}</h3>
+      ${body}
+    </article>
+  `;
+}
+
+function buildInvestigationReportMarkup(payload) {
+  const reports = payload?.reports || [];
+  const brandWebsite = getBrandWebsite(payload);
+
+  const topSummary = `
+    <section class="pdf-report-shell pdf-report-shell--hero">
+      <p class="pdf-report-eyebrow">TinyDetective</p>
+      <h1 class="pdf-report-title">Counterfeit Research Evidence Dossier</h1>
+      <p class="pdf-report-intro">
+        Prepared from the captured TinyDetective investigation outputs for internal review, marketplace complaint
+        preparation, and counsel handoff. This report is an evidence summary, not legal advice.
+      </p>
+      <div class="pdf-report-meta-grid">
+        ${[
+          ["Investigation ID", payload?.investigation_id || "Unavailable"],
+          ["Status", payload?.status || "Unavailable"],
+          ["Created", formatReportDate(payload?.created_at)],
+          ["Updated", formatReportDate(payload?.updated_at)],
+          ["Brand website", brandWebsite],
+        ]
+          .map(
+            ([label, value]) => `
+              <div class="pdf-report-meta-card">
+                <p class="pdf-report-meta-label">${formatReportHtmlValue(label)}</p>
+                <p class="pdf-report-meta-value">${formatReportHtmlValue(value)}</p>
+              </div>
+            `
+          )
+          .join("")}
+      </div>
+    </section>
+  `;
+
+  const sourceBlocks = reports
+    .map((report, index) => {
+      const sourceProduct = report.extracted_source_product || {};
+      const sourceProductFeatures = (sourceProduct.features || []).filter(Boolean);
+      const candidateTasks = getCandidateTasks(report);
+      const discoveredCandidates = collectDiscoveredCandidates(report);
+      const completedComparisons = collectCompletedComparisons(report);
+      const rankedListings = getRankingSnapshots(report);
+      const suggestedActions = getSuggestedActionsForReport(report);
+      const suspiciousUrls = rankedListings.map((item) => String(item.product_url));
+      const operationalTrace = (report.raw_agent_outputs || []).map((task) => {
+        const details = [
+          task.agent_name || "agent",
+          task.status || "unknown",
+          ...buildOperationalTrace(task),
+        ];
+        return details.join(" | ");
+      });
+
+      const rankedListingsMarkup =
+        rankedListings.length === 0
+          ? `<p class="pdf-report-empty">No ranked suspicious or lookalike listings were available in this run.</p>`
+          : `
+              <div class="pdf-report-match-stack">
+                ${rankedListings
+                  .slice(0, 5)
+                  .map((match, rankIndex) => {
+                    const reasoningLines = [
+                      ...getRiskReasonLines(match).map((line) => `Risk reasoning: ${line}`),
+                      ...getMatchReasonLines(match).map((line) => `Match reasoning: ${line}`),
+                      ...(match.evidence || []).slice(0, 5).map((item) => {
+                        const sourceValue =
+                          item.source_value !== null && item.source_value !== undefined
+                            ? ` | source: ${item.source_value}`
+                            : "";
+                        const candidateValue =
+                          item.candidate_value !== null && item.candidate_value !== undefined
+                            ? ` | candidate: ${item.candidate_value}`
+                            : "";
+                        return `Evidence - ${humanizeFieldName(item.field)}: ${item.note}${sourceValue}${candidateValue}`;
+                      }),
+                    ];
+
+                    return `
+                      <article class="pdf-report-match-card">
+                        <div class="pdf-report-match-head">
+                          <div>
+                            <p class="pdf-report-match-index">#${rankIndex + 1}</p>
+                            <h4 class="pdf-report-match-title">${formatReportHtmlValue(
+                              match.candidate_product?.title || match.candidate_product?.model || match.product_url
+                            )}</h4>
+                          </div>
+                          <div class="pdf-report-chip-row">
+                            <span class="pdf-report-chip">Risk ${formatReportHtmlValue(
+                              Number(match.counterfeit_risk_score || 0).toFixed(2)
+                            )}</span>
+                            <span class="pdf-report-chip">Match ${formatReportHtmlValue(
+                              Number(match.match_score || 0).toFixed(2)
+                            )}</span>
+                            <span class="pdf-report-chip">${formatReportHtmlValue(
+                              match.marketplace || formatHostname(match.product_url)
+                            )}</span>
+                          </div>
+                        </div>
+                        ${renderReportFactGrid([
+                          ["Listing URL", match.product_url],
+                          ["Seller", match.candidate_product?.seller_name || "Unavailable"],
+                          ["Observed rationale", match.reason || "No reason returned."],
+                        ])}
+                        ${renderReportListBlock(
+                          reasoningLines,
+                          "No supporting reasoning was returned.",
+                          "pdf-report-list pdf-report-list--tight"
+                        )}
+                      </article>
+                    `;
+                  })
+                  .join("")}
+              </div>
+            `;
+
+      return `
+        <section class="pdf-report-shell pdf-report-shell--source">
+          <div class="pdf-report-source-header">
+            <p class="pdf-report-eyebrow">Source ${index + 1}</p>
+            <h2 class="pdf-report-source-title">${formatReportHtmlValue(
+              sourceProduct.product_name || sourceProduct.model || report.source_url || `Source ${index + 1}`
+            )}</h2>
+            <p class="pdf-report-source-summary">${formatReportHtmlValue(
+              report.summary || "No summary returned."
+            )}</p>
+          </div>
+
+          <div class="pdf-report-grid pdf-report-grid--two">
+            ${renderReportCard(
+              "Investigation Scope",
+              renderReportFactGrid([
+                ["Input URL", report.source_url || lastSubmittedSourceUrl],
+                ["Brand website", brandWebsite],
+                ["Report summary", report.summary || "No summary returned."],
+                ["Report error", report.error || ""],
+                ["Official-store exclusions", report.excluded_official_store_count ?? 0],
+              ]),
+              { kicker: "Case file" }
+            )}
+            ${renderReportCard(
+              "Official Product Reference",
+              [
+                renderReportFactGrid([
+                  ["Brand", sourceProduct.brand || "Unavailable"],
+                  ["Product name", sourceProduct.product_name || "Unavailable"],
+                  ["Category", sourceProduct.category || "Unavailable"],
+                  ["Subcategory", sourceProduct.subcategory || "Unavailable"],
+                  ["SKU", sourceProduct.sku || "Unavailable"],
+                  ["Model", sourceProduct.model || "Unavailable"],
+                  [
+                    "Price",
+                    sourceProduct.price !== null && sourceProduct.price !== undefined
+                      ? formatCompactCurrency(sourceProduct.price, sourceProduct.currency)
+                      : "Unavailable",
+                  ],
+                  ["Color", sourceProduct.color || "Unavailable"],
+                  ["Size", sourceProduct.size || "Unavailable"],
+                  ["Material", sourceProduct.material || "Unavailable"],
+                ]),
+                sourceProductFeatures.length > 0
+                  ? `
+                      <div class="pdf-report-subsection">
+                        <p class="pdf-report-mini-label">Key features</p>
+                        ${renderReportListBlock(
+                          sourceProductFeatures,
+                          "",
+                          "pdf-report-list pdf-report-list--tight"
+                        )}
+                      </div>
+                    `
+                  : "",
+              ].join(""),
+              { kicker: "Official reference" }
+            )}
+          </div>
+
+          ${renderReportCard("Ranked Listings of Concern", rankedListingsMarkup, {
+            kicker: "Priority queue",
+          })}
+
+          <div class="pdf-report-grid pdf-report-grid--two">
+            ${renderReportCard(
+              "Suspicious URLs",
+              renderReportListBlock(
+                suspiciousUrls,
+                "No suspicious URLs were ranked in this run."
+              ),
+              { kicker: "Link set" }
+            )}
+            ${renderReportCard(
+              "Marketplace Search Coverage",
+              candidateTasks.length === 0
+                ? `<p class="pdf-report-empty">No marketplace search tasks were recorded.</p>`
+                : renderReportListBlock(
+                    candidateTasks.map((task) => {
+                      const query =
+                        task.output_payload?.search_query || task.input_payload?.search_query || "Unavailable";
+                      const site =
+                        task.output_payload?.comparison_site ||
+                        task.input_payload?.comparison_site ||
+                        "Unavailable";
+                      const candidateCount = task.output_payload?.candidate_count;
+                      return `${formatHostname(site)} | query: ${query} | status: ${task.status || "unknown"}${
+                        candidateCount !== undefined ? ` | candidates: ${candidateCount}` : ""
+                      }`;
+                    })
+                  ),
+              { kicker: "Search log" }
+            )}
+          </div>
+
+          ${renderReportCard(
+            "Discovered Listing Inventory",
+            discoveredCandidates.length === 0
+              ? `<p class="pdf-report-empty">No candidate listings were captured.</p>`
+              : renderReportListBlock(
+                  discoveredCandidates.map((candidate) => {
+                    const title = candidate.title || candidate.model || candidate.product_url;
+                    const price =
+                      candidate.price !== null && candidate.price !== undefined
+                        ? formatCompactCurrency(candidate.price, candidate.currency)
+                        : "Price unavailable";
+                    return `${title} | ${candidate.product_url} | marketplace: ${
+                      candidate.marketplace || formatHostname(candidate.product_url)
+                    } | seller: ${candidate.seller_name || "Unavailable"} | price: ${price} | query: ${
+                      candidate.discovery_query || "Unavailable"
+                    }`;
+                  }),
+                  "",
+                  "pdf-report-list pdf-report-list--compact"
+                ),
+            { kicker: "Inventory" }
+          )}
+
+          ${renderReportCard(
+            "Comparison Evidence Inventory",
+            completedComparisons.length === 0
+              ? `<p class="pdf-report-empty">No completed comparison records were available.</p>`
+              : renderReportListBlock(
+                  completedComparisons.map((comparison) => {
+                    const signals = (comparison.suspicious_signals || []).join(", ") || "None";
+                    return `${
+                      comparison.candidate_product?.title ||
+                      comparison.candidate_product?.model ||
+                      comparison.product_url
+                    } | ${comparison.product_url} | risk ${Number(
+                      comparison.counterfeit_risk_score || 0
+                    ).toFixed(2)} | match ${Number(comparison.match_score || 0).toFixed(2)} | signals: ${signals}`;
+                  }),
+                  "",
+                  "pdf-report-list pdf-report-list--compact"
+                ),
+            { kicker: "Evidence ledger" }
+          )}
+
+          <div class="pdf-report-grid pdf-report-grid--two">
+            ${renderReportCard(
+              "Recommended Next Actions",
+              renderReportListBlock(suggestedActions, ""),
+              { kicker: "Action queue" }
+            )}
+            ${renderReportCard(
+              "Limitations and Gaps",
+              renderReportListBlock(getReportLimitations(report), ""),
+              { kicker: "Guardrails" }
+            )}
+          </div>
+
+          ${renderReportCard(
+            "Complaint-Prep Checklist",
+            renderReportListBlock([
+              "Preserve the direct listing URL for each suspicious entry and record the capture date and time on any screenshot or exported artifact.",
+              "Attach trademark ownership, authorization, or registration materials separately before filing any formal complaint or legal action.",
+              "Confirm seller identity, marketplace storefront details, and product identifiers before requesting takedown or asserting infringement.",
+              "Separate factual observations from legal conclusions; use this dossier as supporting evidence for counsel or trust-and-safety review.",
+              "If a direct link becomes unavailable, capture a screenshot of the listing or ad together with the visible seller and product details.",
+            ]),
+            { kicker: "Preparation" }
+          )}
+
+          ${renderReportCard(
+            "Operational Trace",
+            renderReportListBlock(
+              operationalTrace.length > 0 ? operationalTrace : ["No operational trace was captured."],
+              "",
+              "pdf-report-list pdf-report-list--compact"
+            ),
+            { kicker: "Runtime trace" }
+          )}
+
+          <div class="pdf-report-footer">
+            <span>TinyDetective research dossier</span>
+            <span>Updated ${formatReportHtmlValue(formatReportDate(payload?.updated_at))}</span>
+          </div>
+        </section>
+      `;
+    })
+    .join("");
+
+  return `
+    <div class="pdf-report-root">
+      ${topSummary}
+      ${sourceBlocks}
+    </div>
+  `;
+}
+
+function createInvestigationReportElement(payload) {
+  const container = document.createElement("div");
+  container.className = "pdf-report-mount";
+  container.setAttribute("aria-hidden", "true");
+  container.style.position = "fixed";
+  container.style.left = "-100000px";
+  container.style.top = "0";
+  container.style.width = "820px";
+  container.style.pointerEvents = "none";
+  container.style.zIndex = "-1";
+
+  container.innerHTML = `
+    <style>
+      .pdf-report-root {
+        width: 760px;
+        padding: 24px;
+        color: #433a32;
+        font-family: "Manrope", sans-serif;
+        background:
+          radial-gradient(circle at 12% 14%, rgba(239, 228, 208, 0.78), transparent 26%),
+          radial-gradient(circle at 86% 4%, rgba(214, 229, 228, 0.44), transparent 30%),
+          linear-gradient(180deg, #fbf8f2 0%, #f2eadf 100%);
+      }
+
+      .pdf-report-root,
+      .pdf-report-root *,
+      .pdf-report-root *::before,
+      .pdf-report-root *::after {
+        box-sizing: border-box;
+      }
+
+      .pdf-report-shell {
+        break-inside: avoid;
+        page-break-inside: avoid;
+        padding: 28px;
+        border: 1px solid #d8cfc1;
+        border-radius: 28px;
+        background: rgba(255, 255, 255, 0.86);
+        box-shadow:
+          0 22px 60px rgba(75, 60, 42, 0.08),
+          inset 0 1px 0 rgba(255, 255, 255, 0.78);
+      }
+
+      .pdf-report-shell + .pdf-report-shell {
+        margin-top: 18px;
+      }
+
+      .pdf-report-shell--source {
+        padding-top: 24px;
+      }
+
+      .pdf-report-eyebrow,
+      .pdf-report-card-kicker,
+      .pdf-report-mini-label,
+      .pdf-report-meta-label,
+      .pdf-report-match-index {
+        margin: 0;
+        text-transform: uppercase;
+        letter-spacing: 0.18em;
+        font-size: 10px;
+        font-weight: 800;
+        color: #928577;
+      }
+
+      .pdf-report-title,
+      .pdf-report-source-title {
+        margin: 0;
+        font-family: "Instrument Serif", serif;
+        font-weight: 400;
+        letter-spacing: -0.02em;
+        color: #352c26;
+      }
+
+      .pdf-report-title {
+        font-size: 42px;
+        line-height: 0.95;
+      }
+
+      .pdf-report-source-title {
+        font-size: 28px;
+        line-height: 0.98;
+      }
+
+      .pdf-report-intro,
+      .pdf-report-source-summary,
+      .pdf-report-empty,
+      .pdf-report-note,
+      .pdf-report-meta-value,
+      .pdf-report-fact dd,
+      .pdf-report-list {
+        color: #5a5048;
+      }
+
+      .pdf-report-intro,
+      .pdf-report-source-summary {
+        margin: 14px 0 0;
+        font-size: 14px;
+        line-height: 1.55;
+      }
+
+      .pdf-report-meta-grid,
+      .pdf-report-grid {
+        display: grid;
+        gap: 16px;
+        margin-top: 22px;
+      }
+
+      .pdf-report-meta-grid,
+      .pdf-report-grid--two {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .pdf-report-meta-card,
+      .pdf-report-card,
+      .pdf-report-match-card {
+        break-inside: avoid;
+        page-break-inside: avoid;
+        border: 1px solid #e1d8cc;
+        border-radius: 20px;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.94) 0%, rgba(248, 243, 235, 0.92) 100%);
+      }
+
+      .pdf-report-meta-card {
+        padding: 14px 16px;
+      }
+
+      .pdf-report-meta-value {
+        margin: 8px 0 0;
+        font-size: 13px;
+        line-height: 1.5;
+        word-break: break-word;
+      }
+
+      .pdf-report-card {
+        padding: 18px;
+      }
+
+      .pdf-report-card-title {
+        margin: 8px 0 0;
+        font-size: 18px;
+        font-weight: 800;
+        line-height: 1.18;
+        color: #352c26;
+      }
+
+      .pdf-report-facts {
+        display: grid;
+        gap: 10px;
+        margin: 14px 0 0;
+      }
+
+      .pdf-report-fact {
+        display: grid;
+        grid-template-columns: 116px minmax(0, 1fr);
+        gap: 12px;
+        align-items: start;
+      }
+
+      .pdf-report-fact dt {
+        margin: 0;
+        font-size: 12px;
+        font-weight: 800;
+        line-height: 1.4;
+        color: #827568;
+      }
+
+      .pdf-report-fact dd {
+        margin: 0;
+        font-size: 12px;
+        line-height: 1.55;
+        word-break: break-word;
+      }
+
+      .pdf-report-list {
+        margin: 14px 0 0;
+        padding-left: 18px;
+        display: grid;
+        gap: 8px;
+        font-size: 12px;
+        line-height: 1.5;
+      }
+
+      .pdf-report-list--tight {
+        gap: 6px;
+        font-size: 11.5px;
+      }
+
+      .pdf-report-list--compact {
+        gap: 5px;
+        font-size: 11px;
+        line-height: 1.45;
+      }
+
+      .pdf-report-match-stack {
+        display: grid;
+        gap: 12px;
+        margin-top: 14px;
+      }
+
+      .pdf-report-match-card {
+        padding: 14px;
+      }
+
+      .pdf-report-match-head {
+        display: grid;
+        gap: 10px;
+      }
+
+      .pdf-report-match-title {
+        margin: 8px 0 0;
+        font-size: 14px;
+        line-height: 1.35;
+        color: #352c26;
+      }
+
+      .pdf-report-chip-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .pdf-report-chip {
+        display: inline-flex;
+        align-items: center;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: #efe6d8;
+        color: #5d4d40;
+        font-size: 11px;
+        font-weight: 800;
+      }
+
+      .pdf-report-subsection {
+        margin-top: 14px;
+        padding-top: 14px;
+        border-top: 1px solid #e6ded2;
+      }
+
+      .pdf-report-footer {
+        margin-top: 16px;
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.16em;
+        color: #928577;
+      }
+    </style>
+    ${buildInvestigationReportMarkup(payload)}
+  `;
+
+  return container;
+}
+
+async function buildInvestigationPdf(payload) {
+  return buildInvestigationPdfFallback(payload);
+}
+
+function getInvestigationReportDocumentStyles() {
+  return `
+    :root {
+      color-scheme: light;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      min-height: 100%;
+    }
+
+    body {
+      font-family: "Manrope", sans-serif;
+      color: #433a32;
+      line-height: 1.5;
+      background:
+        radial-gradient(circle at 12% 14%, rgba(239, 228, 208, 0.78), transparent 26%),
+        radial-gradient(circle at 86% 4%, rgba(214, 229, 228, 0.44), transparent 30%),
+        linear-gradient(180deg, #fbf8f2 0%, #f2eadf 100%);
+    }
+
+    .pdf-report-page {
+      width: min(1180px, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 32px 0 48px;
+    }
+
+    .pdf-report-root {
+      display: grid;
+      gap: 18px;
+    }
+
+    .pdf-report-shell {
+      break-inside: avoid;
+      padding: 28px;
+      border: 1px solid #d8cfc1;
+      border-radius: 28px;
+      background: rgba(255, 255, 255, 0.86);
+      box-shadow:
+        0 22px 60px rgba(75, 60, 42, 0.08),
+        inset 0 1px 0 rgba(255, 255, 255, 0.78);
+    }
+
+    .pdf-report-eyebrow,
+    .pdf-report-card-kicker,
+    .pdf-report-mini-label,
+    .pdf-report-meta-label,
+    .pdf-report-match-index {
+      margin: 0;
+      text-transform: uppercase;
+      letter-spacing: 0.18em;
+      font-size: 10px;
+      font-weight: 800;
+      color: #928577;
+    }
+
+    .pdf-report-title,
+    .pdf-report-source-title {
+      margin: 0;
+      font-family: "Instrument Serif", serif;
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      color: #352c26;
+      line-height: 0.96;
+    }
+
+    .pdf-report-title {
+      font-size: clamp(2.8rem, 5vw, 4.35rem);
+    }
+
+    .pdf-report-source-title {
+      font-size: clamp(2rem, 3vw, 2.6rem);
+    }
+
+    .pdf-report-intro,
+    .pdf-report-source-summary {
+      margin: 14px 0 0;
+      font-size: 1.02rem;
+      line-height: 1.55;
+      color: #5a5048;
+    }
+
+    .pdf-report-meta-grid,
+    .pdf-report-grid {
+      display: grid;
+      gap: 16px;
+      margin-top: 22px;
+    }
+
+    .pdf-report-meta-grid,
+    .pdf-report-grid--two {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .pdf-report-meta-card,
+    .pdf-report-card,
+    .pdf-report-match-card {
+      border: 1px solid #e1d8cc;
+      border-radius: 20px;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.94) 0%, rgba(248, 243, 235, 0.92) 100%);
+    }
+
+    .pdf-report-meta-card {
+      padding: 14px 16px;
+    }
+
+    .pdf-report-meta-value {
+      margin: 8px 0 0;
+      font-size: 0.95rem;
+      line-height: 1.5;
+      color: #5a5048;
+      word-break: break-word;
+    }
+
+    .pdf-report-card {
+      padding: 18px;
+    }
+
+    .pdf-report-card-title {
+      margin: 8px 0 0;
+      font-size: 1.2rem;
+      font-weight: 800;
+      line-height: 1.18;
+      color: #352c26;
+    }
+
+    .pdf-report-facts {
+      display: grid;
+      gap: 10px;
+      margin: 14px 0 0;
+    }
+
+    .pdf-report-fact {
+      display: grid;
+      grid-template-columns: 116px minmax(0, 1fr);
+      gap: 12px;
+      align-items: start;
+    }
+
+    .pdf-report-fact dt {
+      margin: 0;
+      font-size: 0.83rem;
+      font-weight: 800;
+      line-height: 1.4;
+      color: #827568;
+    }
+
+    .pdf-report-fact dd {
+      margin: 0;
+      font-size: 0.9rem;
+      line-height: 1.55;
+      color: #5a5048;
+      word-break: break-word;
+    }
+
+    .pdf-report-list {
+      margin: 14px 0 0;
+      padding-left: 18px;
+      display: grid;
+      gap: 8px;
+      font-size: 0.92rem;
+      line-height: 1.5;
+      color: #5a5048;
+    }
+
+    .pdf-report-list--tight {
+      gap: 6px;
+      font-size: 0.88rem;
+    }
+
+    .pdf-report-list--compact {
+      gap: 5px;
+      font-size: 0.85rem;
+      line-height: 1.45;
+    }
+
+    .pdf-report-empty {
+      margin: 14px 0 0;
+      color: #5a5048;
+    }
+
+    .pdf-report-match-stack {
+      display: grid;
+      gap: 12px;
+      margin-top: 14px;
+    }
+
+    .pdf-report-match-card {
+      padding: 14px;
+    }
+
+    .pdf-report-match-head {
+      display: grid;
+      gap: 10px;
+    }
+
+    .pdf-report-match-title {
+      margin: 8px 0 0;
+      font-size: 1rem;
+      line-height: 1.35;
+      color: #352c26;
+    }
+
+    .pdf-report-chip-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .pdf-report-chip {
+      display: inline-flex;
+      align-items: center;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: #efe6d8;
+      color: #5d4d40;
+      font-size: 0.78rem;
+      font-weight: 800;
+    }
+
+    .pdf-report-subsection {
+      margin-top: 14px;
+      padding-top: 14px;
+      border-top: 1px solid #e6ded2;
+    }
+
+    .pdf-report-footer {
+      margin-top: 16px;
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.16em;
+      color: #928577;
+    }
+
+    .pdf-report-toolbar {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      display: flex;
+      justify-content: flex-end;
+      padding: 16px 24px 0;
+      background: linear-gradient(180deg, rgba(251, 248, 242, 0.95), rgba(251, 248, 242, 0));
+      backdrop-filter: blur(8px);
+    }
+
+    .pdf-report-print-button {
+      border: 0;
+      border-radius: 999px;
+      padding: 10px 16px;
+      background: #433a32;
+      color: #f8f1e7;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    @media (max-width: 860px) {
+      .pdf-report-page {
+        width: min(100% - 24px, 100%);
+        padding-top: 20px;
+      }
+
+      .pdf-report-meta-grid,
+      .pdf-report-grid--two {
+        grid-template-columns: 1fr;
+      }
+
+      .pdf-report-fact {
+        grid-template-columns: 1fr;
+        gap: 4px;
+      }
+
+      .pdf-report-shell {
+        padding: 20px;
+      }
+
+      .pdf-report-footer {
+        flex-direction: column;
+      }
+    }
+
+    @media print {
+      body {
+        background: #ffffff;
+      }
+
+      .pdf-report-toolbar {
+        display: none;
+      }
+
+      .pdf-report-page {
+        width: 100%;
+        padding: 0;
+      }
+
+      .pdf-report-shell,
+      .pdf-report-card,
+      .pdf-report-match-card,
+      .pdf-report-meta-card {
+        box-shadow: none;
+      }
+
+      @page {
+        size: letter;
+        margin: 0.55in;
+      }
+    }
+  `;
+}
+
+function buildInvestigationReportDocument(payload) {
+  return `<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TinyDetective Evidence Dossier</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Manrope:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <style>${getInvestigationReportDocumentStyles()}</style>
+  </head>
+  <body>
+    <div class="pdf-report-toolbar">
+      <button class="pdf-report-print-button" type="button" onclick="window.print()">Print / Save PDF</button>
+    </div>
+    <main class="pdf-report-page">
+      ${buildInvestigationReportMarkup(payload)}
+    </main>
+  </body>
+</html>`;
+}
+
+function revokeCurrentReportDocumentUrl() {
+  if (!currentReportDocumentUrl) {
     return;
   }
-  window.URL.revokeObjectURL(currentReportPdfUrl);
-  currentReportPdfUrl = null;
+  window.URL.revokeObjectURL(currentReportDocumentUrl);
+  currentReportDocumentUrl = null;
 }
 
 function resetReportScene() {
-  revokeCurrentReportPdfUrl();
+  revokeCurrentReportDocumentUrl();
   if (reportPdfFrame) {
+    reportPdfFrame.removeAttribute("srcdoc");
     reportPdfFrame.removeAttribute("src");
   }
   if (reportOpenButton) {
     reportOpenButton.hidden = true;
+    reportOpenButton.textContent = "Open in new tab";
   }
   if (reportMeta) {
-    setTextContent(reportMeta, "The embedded PDF will be prepared from the captured investigation data.");
+    setTextContent(reportMeta, "The styled report will be prepared from the captured investigation data.");
   }
   if (reportNote) {
     setTextContent(reportNote, "Generate a report from step 5 to review it here.");
   }
 }
 
-function presentPdfReport(blob, payload) {
-  const objectUrl = window.URL.createObjectURL(blob);
-  revokeCurrentReportPdfUrl();
-  currentReportPdfUrl = objectUrl;
+function presentStyledReport(payload) {
+  const reportDocument = buildInvestigationReportDocument(payload);
+  const objectUrl = window.URL.createObjectURL(new Blob([reportDocument], { type: "text/html" }));
+  revokeCurrentReportDocumentUrl();
+  currentReportDocumentUrl = objectUrl;
 
   if (reportPdfFrame) {
+    reportPdfFrame.srcdoc = reportDocument;
     reportPdfFrame.src = objectUrl;
   }
   if (reportOpenButton) {
     reportOpenButton.hidden = false;
+    reportOpenButton.textContent = "Open / print";
   }
   if (reportNote) {
-    setTextContent(reportNote, "The evidence dossier is ready for review.");
+    setTextContent(reportNote, "The styled evidence dossier is ready for review.");
   }
   if (reportMeta) {
     setTextContent(
@@ -2361,16 +3412,15 @@ if (generateReportButton) {
 
     reportGenerationInFlight = true;
     updateGenerateReportButton(latestInvestigationPayload);
-    setTextContent(progressText, "Generating the evidence dossier PDF from the latest investigation data.");
+    setTextContent(progressText, "Generating the styled evidence dossier from the latest investigation data.");
 
     try {
-      const pdfBlob = buildInvestigationPdf(latestInvestigationPayload);
-      presentPdfReport(pdfBlob, latestInvestigationPayload);
-      setTextContent(progressText, "Evidence dossier prepared and embedded below.");
+      presentStyledReport(latestInvestigationPayload);
+      setTextContent(progressText, "Styled evidence dossier prepared and embedded below.");
     } catch (error) {
       setTextContent(
         progressText,
-        error instanceof Error ? error.message : "The report PDF could not be generated."
+        error instanceof Error ? error.message : "The report could not be generated."
       );
     } finally {
       reportGenerationInFlight = false;
@@ -2387,10 +3437,10 @@ if (reportBackButton) {
 
 if (reportOpenButton) {
   reportOpenButton.addEventListener("click", () => {
-    if (!currentReportPdfUrl) {
+    if (!currentReportDocumentUrl) {
       return;
     }
-    window.open(currentReportPdfUrl, "_blank", "noopener");
+    window.open(currentReportDocumentUrl, "_blank", "noopener");
   });
 }
 
