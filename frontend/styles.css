@@ -142,6 +142,32 @@ body[data-phase="report"] .shell {
   justify-items: center;
 }
 
+.prompt-brand {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(14px, 1.8vw, 22px);
+}
+
+.prompt-brand-mark {
+  display: block;
+  width: clamp(74px, 6.6vw, 102px);
+  flex: 0 0 auto;
+}
+
+.prompt-brand-logo {
+  display: block;
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+  opacity: 0.94;
+}
+
+.prompt-brand-copy {
+  display: block;
+  text-align: left;
+}
+
 .eyebrow,
 .section-label {
   margin: 0;
@@ -1746,6 +1772,15 @@ code {
     padding: 20px;
   }
 
+  .prompt-brand {
+    gap: 12px;
+    align-items: center;
+  }
+
+  .prompt-brand-mark {
+    width: clamp(58px, 18vw, 84px);
+  }
+
   .logo-marquee {
     width: min(100%, 440px);
     min-width: 0;
@@ -1848,4 +1883,5 @@ code {
     animation: none !important;
     transition: none !important;
   }
+
 }
