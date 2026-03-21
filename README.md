@@ -28,13 +28,27 @@ This version is wired to the real TinyFish service for live browser automations.
 ## Setup
 
 ```bash
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r backend/requirements.txt
-uvicorn backend.main:app --reload
+uv sync --dev
+uv run python -m backend
+```
+
+You can also run the backend entry file directly:
+
+```bash
+cd backend
+uv run main.py
 ```
 
 Open `http://127.0.0.1:8000`.
+
+## Dependency Management
+
+```bash
+uv add <package>
+uv add --dev <package>
+uv sync --dev
+uv run pytest
+```
 
 ## Environment
 
@@ -42,6 +56,10 @@ Create `.env` from `.env.example` and set:
 
 ```bash
 TINYFISH_API_KEY=your-real-key
+TINYFISH_HTTP_TIMEOUT_SECONDS=15.0
+TINYFISH_RUN_SOFT_TIMEOUT_SECONDS=300.0
+TINYFISH_RUN_HARD_TIMEOUT_SECONDS=1800.0
+TINYFISH_RUN_STALL_TIMEOUT_SECONDS=120.0
 BRAND_LANDING_PAGE_URL=https://www.yourbrand.com/
 ECOMMERCE_STORE_URLS=https://shopee.sg/,https://www.lazada.sg/
 ```

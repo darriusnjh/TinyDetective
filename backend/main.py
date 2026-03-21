@@ -3,8 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from pathlib import Path
 
+if __package__ in {None, ""}:
+    PROJECT_ROOT = Path(__file__).resolve().parent.parent
+    if str(PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(PROJECT_ROOT))
+
+import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -72,3 +79,11 @@ async def get_investigation(investigation_id: str) -> InvestigationResponse:
     if investigation is None:
         raise HTTPException(status_code=404, detail="Investigation not found")
     return investigation
+
+
+def run() -> None:
+    uvicorn.run("backend.main:app", host="127.0.0.1", port=8000, reload=True)
+
+
+if __name__ == "__main__":
+    run()
