@@ -1,4 +1,4 @@
-"""Application settings loaded from environment variables and .env."""
+﻿"""Application settings loaded from environment variables and .env."""
 
 from __future__ import annotations
 
@@ -69,3 +69,4 @@ class Settings:
 
 
 settings = Settings()
+

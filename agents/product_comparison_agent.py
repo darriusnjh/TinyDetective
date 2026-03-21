@@ -4,11 +4,24 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from datetime import datetime
-from typing import Any
+from urllib.parse import urlparse
 
 from adapters.comparison_site_adapter import TinyFishComparisonSiteAdapter
 from models.schemas import CandidateProduct, ComparisonResult, SourceProduct
+from services.settings import settings
 from services.tinyfish_client import TinyFishRun
+
+
+OFFICIAL_STORE_CONFIDENCE_THRESHOLD = 0.75
+OFFICIAL_STORE_TERMS = (
+    "official",
+    "official store",
+    "flagship",
+    "authorized",
+    "authorised",
+    "authentic",
+    "mall",
+)
 
 
 def counterfeit_risk_score_safe(score: float) -> bool:
@@ -29,6 +42,7 @@ class ProductComparisonAgent:
         on_update: Callable[[TinyFishRun], Awaitable[None] | None] | None = None,
     ) -> tuple[ComparisonResult, dict[str, Any]]:
         candidate_full, raw_output = await self._fetch_candidate(candidate, on_update=on_update)
+        candidate_full.discovery_queries = list(candidate.discovery_queries)
         return self._build_result(source_product, candidate_full), raw_output
 
     async def resume(
@@ -47,6 +61,7 @@ class ProductComparisonAgent:
             started_at=started_at,
             last_progress_at=last_progress_at,
         )
+        candidate_full.discovery_queries = list(candidate.discovery_queries)
         return self._build_result(source_product, candidate_full), raw_output
 
     async def _fetch_candidate(
@@ -107,27 +122,24 @@ class ProductComparisonAgent:
                 source_product.description, candidate_full.description
             ),
         }
-        match_score = round(
-            (
-                comparisons["brand"] * 0.20
-                + comparisons["title"] * 0.20
-                + comparisons["sku"] * 0.20
-                + comparisons["model"] * 0.15
-                + comparisons["color"] * 0.05
-                + comparisons["material"] * 0.05
-                + comparisons["size"] * 0.05
-                + comparisons["description"] * 0.10
-            ),
-            2,
+        base_match_score = (
+            comparisons["brand"] * 0.25
+            + comparisons["title"] * 0.25
+            + comparisons["model"] * 0.15
+            + comparisons["color"] * 0.05
+            + comparisons["material"] * 0.05
+            + comparisons["size"] * 0.05
+            + comparisons["description"] * 0.10
         )
+        sku_bonus = 0.10 if comparisons["sku"] == 1.0 else 0.0
+        match_score = round(min(1.0, base_match_score + sku_bonus), 2)
+
         suspicious_signals: list[str] = []
         price_gap = self._price_gap_ratio(source_product.price, candidate_full.price)
         if price_gap >= 0.4:
             suspicious_signals.append("suspiciously_low_price")
         if comparisons["brand"] < 1.0:
             suspicious_signals.append("brand_mismatch")
-        if comparisons["sku"] == 0 and candidate_full.sku:
-            suspicious_signals.append("sku_mismatch")
         if comparisons["description"] >= 0.7 and price_gap >= 0.4:
             suspicious_signals.append("copied_description_with_discount_pricing")
 
@@ -137,7 +149,6 @@ class ProductComparisonAgent:
                 0.2
                 + (0.45 if price_gap >= 0.4 else 0.0)
                 + (0.15 if comparisons["brand"] < 1.0 else 0.0)
-                + (0.1 if comparisons["sku"] == 0 and candidate_full.sku else 0.0)
                 + (0.1 if comparisons["description"] >= 0.7 else 0.0),
             ),
             2,
@@ -145,23 +156,34 @@ class ProductComparisonAgent:
         is_exact_match = (
             comparisons["brand"] == 1.0
             and comparisons["title"] >= 0.9
-            and comparisons["sku"] == 1.0
             and comparisons["model"] == 1.0
             and counterfeit_risk_score_safe(counterfeit_risk)
         )
+
+        official_store_confidence, official_store_signals = self._official_store_confidence(
+            source_product,
+            candidate_full,
+            comparisons["brand"],
+        )
+        is_official_store = official_store_confidence >= OFFICIAL_STORE_CONFIDENCE_THRESHOLD
         reason = self._build_reason(match_score, counterfeit_risk, suspicious_signals)
-        comparison = ComparisonResult(
+        if is_official_store:
+            reason = "High-confidence official store listing detected; excluded from suspicious results."
+
+        return ComparisonResult(
             source_url=source_product.source_url,
             product_url=candidate_full.product_url,
             marketplace=candidate_full.marketplace,
             match_score=match_score,
             is_exact_match=is_exact_match,
+            is_official_store=is_official_store,
+            official_store_confidence=official_store_confidence,
+            official_store_signals=official_store_signals,
             counterfeit_risk_score=counterfeit_risk,
             suspicious_signals=suspicious_signals,
             reason=reason,
             candidate_product=candidate_full,
         )
-        return comparison
 
     @staticmethod
     def _eq(left: str | None, right: str | None) -> float:
@@ -195,6 +217,55 @@ class ProductComparisonAgent:
         if not source_price or not candidate_price:
             return 0.0
         return round(max(0.0, (source_price - candidate_price) / source_price), 2)
+
+    @staticmethod
+    def _official_store_confidence(
+        source_product: SourceProduct,
+        candidate_product: CandidateProduct,
+        brand_match_score: float,
+    ) -> tuple[float, list[str]]:
+        signals: list[str] = []
+        confidence = 0.0
+        source_host = ProductComparisonAgent._host(str(source_product.source_url))
+        candidate_host = ProductComparisonAgent._host(str(candidate_product.product_url))
+        brand_host = ProductComparisonAgent._host(settings.brand_landing_page_url)
+        seller_name = ProductComparisonAgent._normalize(candidate_product.seller_name)
+        source_brand = ProductComparisonAgent._normalize(source_product.brand)
+
+        if candidate_host and (candidate_host == source_host or (brand_host and candidate_host == brand_host)):
+            signals.append("listing_host_matches_official_brand_host")
+            return 1.0, signals
+
+        if brand_match_score == 1.0:
+            confidence += 0.2
+            signals.append("candidate_brand_matches_source_brand")
+
+        brand_tokens = [token for token in source_brand.split() if token]
+        if seller_name and brand_tokens:
+            if all(token in seller_name for token in brand_tokens):
+                confidence += 0.35
+                signals.append("seller_name_matches_source_brand")
+            elif any(token in seller_name for token in brand_tokens):
+                confidence += 0.15
+                signals.append("seller_name_partially_matches_source_brand")
+
+        if seller_name and any(term in seller_name for term in OFFICIAL_STORE_TERMS):
+            confidence += 0.35
+            signals.append("seller_name_contains_official_store_terms")
+
+        return round(min(1.0, confidence), 2), signals
+
+    @staticmethod
+    def _normalize(value: str | None) -> str:
+        if not value:
+            return ""
+        return " ".join(value.lower().replace("-", " ").replace("_", " ").split())
+
+    @staticmethod
+    def _host(value: str | None) -> str:
+        if not value:
+            return ""
+        return urlparse(value).netloc.lower().replace("www.", "")
 
     @staticmethod
     def _build_reason(

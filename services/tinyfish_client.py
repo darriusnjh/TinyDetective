@@ -1,4 +1,4 @@
-"""TinyFish API client."""
+﻿"""TinyFish API client."""
 
 from __future__ import annotations
 
@@ -222,3 +222,4 @@ class TinyFishClient:
             sort_keys=True,
             default=str,
         )
+

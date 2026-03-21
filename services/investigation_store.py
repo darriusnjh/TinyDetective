@@ -1,4 +1,4 @@
-"""SQLite-backed investigation persistence."""
+﻿"""SQLite-backed investigation persistence."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from models.schemas import (
+    ActivityLogEntry,
     InvestigationCreateRequest,
     InvestigationListItem,
     InvestigationResponse,
@@ -115,6 +116,9 @@ class InvestigationStore:
         return InvestigationCreateRequest.model_validate_json(row["request_json"])
 
     def _save_sync(self, item: InvestigationResponse) -> None:
+        existing = self._get_sync(item.investigation_id)
+        if existing is not None and len(existing.activity_log) > len(item.activity_log):
+            item.activity_log = existing.activity_log
         with self._connect() as connection:
             updated_at = item.updated_at.isoformat()
             cursor = connection.execute(
@@ -132,6 +136,14 @@ class InvestigationStore:
             )
         if cursor.rowcount == 0:
             raise KeyError(item.investigation_id)
+
+    def _append_activity_sync(self, investigation_id: str, entry: ActivityLogEntry) -> None:
+        item = self._get_sync(investigation_id)
+        if item is None:
+            return
+        item.activity_log.append(entry)
+        item.updated_at = utc_now()
+        self._save_sync(item)
 
     def _list_active_sync(self) -> list[InvestigationResponse]:
         active_statuses = (
@@ -205,3 +217,8 @@ class InvestigationStore:
     async def list_recent(self, limit: int = 12) -> list[InvestigationListItem]:
         async with self._lock:
             return await asyncio.to_thread(self._list_recent_sync, limit)
+
+    async def append_activity(self, investigation_id: str, entry: ActivityLogEntry) -> None:
+        async with self._lock:
+            await asyncio.to_thread(self._append_activity_sync, investigation_id, entry)
+

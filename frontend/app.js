@@ -1,4 +1,4 @@
-const form = document.getElementById("investigation-form");
+﻿const form = document.getElementById("investigation-form");
 const sourceUrlsInput = document.getElementById("source-urls");
 const comparisonSitesInput = document.getElementById("comparison-sites");
 const resultsNode = document.getElementById("results");
@@ -915,3 +915,4 @@ fetch("/config")
     configNote.textContent =
       "Environment defaults could not be loaded. Manual inputs still work.";
   });
+

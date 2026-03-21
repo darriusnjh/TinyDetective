@@ -1,4 +1,4 @@
-"""TinyFish-backed source page extraction adapter."""
+﻿"""TinyFish-backed source page extraction adapter."""
 
 from __future__ import annotations
 
@@ -81,3 +81,4 @@ class TinyFishSourcePageAdapter:
             "tinyfish_last_heartbeat_at": run.last_heartbeat_at.isoformat() if run.last_heartbeat_at else None,
             "tinyfish_last_progress_at": run.last_progress_at.isoformat() if run.last_progress_at else None,
         }
+

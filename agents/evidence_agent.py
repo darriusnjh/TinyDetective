@@ -18,7 +18,15 @@ class EvidenceAgent:
         evidence.extend(
             self._compare_field("brand_match", "brand", source_product.brand, candidate.brand)
         )
-        evidence.extend(self._compare_field("sku_check", "sku", source_product.sku, candidate.sku))
+        evidence.extend(
+            self._compare_field(
+                "sku_check",
+                "sku",
+                source_product.sku,
+                candidate.sku,
+                report_mismatch=False,
+            )
+        )
         evidence.extend(self._compare_field("model_check", "model", source_product.model, candidate.model))
         evidence.extend(self._compare_field("color_check", "color", source_product.color, candidate.color))
         evidence.extend(self._compare_field("size_check", "size", source_product.size, candidate.size))
@@ -58,10 +66,13 @@ class EvidenceAgent:
         field: str,
         source_value: str | None,
         candidate_value: str | None,
+        report_mismatch: bool = True,
     ) -> list[EvidenceItem]:
         if not source_value and not candidate_value:
             return []
         matches = bool(source_value and candidate_value and source_value.lower() == candidate_value.lower())
+        if not matches and not report_mismatch:
+            return []
         return [
             EvidenceItem(
                 type=evidence_type,

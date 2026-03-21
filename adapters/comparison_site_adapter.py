@@ -22,28 +22,36 @@ class TinyFishComparisonSiteAdapter:
         self,
         source_product: SourceProduct,
         comparison_site: str,
+        search_query: str,
         top_n: int = 3,
         on_update: Callable[[TinyFishRun], Awaitable[None] | None] | None = None,
     ) -> tuple[list[CandidateProduct], dict[str, Any]]:
         marketplace = self._marketplace_name(comparison_site)
         run = await self.client.run_json(
             comparison_site,
-            self._search_goal(source_product, top_n),
+            self._search_goal(source_product, search_query, top_n),
             on_update=on_update,
         )
         result = self._coerce_result_object(run)
         candidates = [
-            CandidateProduct.model_validate({**candidate, "marketplace": candidate.get("marketplace") or marketplace})
+            CandidateProduct.model_validate(
+                {
+                    **candidate,
+                    "marketplace": candidate.get("marketplace") or marketplace,
+                    "discovery_queries": [search_query],
+                }
+            )
             for candidate in result.get("candidates", [])
             if candidate.get("product_url")
         ]
-        return candidates[:top_n], self._raw_output(run)
+        return candidates[:top_n], self._raw_output(run, search_query)
 
     async def resume_search(
         self,
         source_product: SourceProduct,
         comparison_site: str,
         run_id: str,
+        search_query: str,
         top_n: int = 3,
         on_update: Callable[[TinyFishRun], Awaitable[None] | None] | None = None,
         started_at: datetime | None = None,
@@ -58,17 +66,25 @@ class TinyFishComparisonSiteAdapter:
         )
         result = self._coerce_result_object(run)
         candidates = [
-            CandidateProduct.model_validate({**candidate, "marketplace": candidate.get("marketplace") or marketplace})
+            CandidateProduct.model_validate(
+                {
+                    **candidate,
+                    "marketplace": candidate.get("marketplace") or marketplace,
+                    "discovery_queries": [search_query],
+                }
+            )
             for candidate in result.get("candidates", [])
             if candidate.get("product_url")
         ]
-        return candidates[:top_n], self._raw_output(run)
+        return candidates[:top_n], self._raw_output(run, search_query)
 
     @staticmethod
-    def _search_goal(source_product: SourceProduct, top_n: int) -> str:
-        goal = (
+    def _search_goal(source_product: SourceProduct, search_query: str, top_n: int) -> str:
+        return (
             f"You are investigating counterfeit or suspicious product listings. Search this marketplace or store "
             f"for up to {top_n} candidate listings that may match the official source product. "
+            f"Use this derived search query exactly as your starting point: {search_query!r}. "
+            "This query came from the official product analysis step from the source URL. "
             f"Official product details: brand={source_product.brand!r}, product_name={source_product.product_name!r}, "
             f"category={source_product.category!r}, subcategory={source_product.subcategory!r}, "
             f"price={source_product.price!r} {source_product.currency!r}, color={source_product.color!r}, "
@@ -80,7 +96,6 @@ class TinyFishComparisonSiteAdapter:
             '"description":"","image_urls":[]}]} '
             "Only include real listing URLs found on this site. Do not fabricate listings."
         )
-        return goal
 
     async def fetch_candidate_product(
         self,
@@ -116,14 +131,13 @@ class TinyFishComparisonSiteAdapter:
 
     @staticmethod
     def _candidate_goal() -> str:
-        goal = (
+        return (
             "Visit this product listing page and extract structured product data for counterfeit research. "
             "Return valid JSON only with this exact shape: "
             '{"seller_name":"","title":"","price":0,"currency":"","brand":"","color":"","size":"",'
             '"material":"","model":"","sku":"","description":"","image_urls":[]} '
             "Use null for unknown scalar values and [] for unknown lists. Do not invent values."
         )
-        return goal
 
     @staticmethod
     def _coerce_result_object(run: TinyFishRun) -> dict[str, Any]:
@@ -143,7 +157,7 @@ class TinyFishComparisonSiteAdapter:
         return (host.split(".")[0] if host else site).title()
 
     @staticmethod
-    def _raw_output(run: TinyFishRun) -> dict[str, Any]:
+    def _raw_output(run: TinyFishRun, search_query: str | None = None) -> dict[str, Any]:
         return {
             "tinyfish_run_id": run.run_id,
             "tinyfish_status": run.status,
@@ -152,4 +166,5 @@ class TinyFishComparisonSiteAdapter:
             "tinyfish_delayed": run.delayed,
             "tinyfish_last_heartbeat_at": run.last_heartbeat_at.isoformat() if run.last_heartbeat_at else None,
             "tinyfish_last_progress_at": run.last_progress_at.isoformat() if run.last_progress_at else None,
+            "search_query": search_query or "",
         }

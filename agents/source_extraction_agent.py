@@ -1,4 +1,4 @@
-"""Source extraction agent."""
+﻿"""Source extraction agent."""
 
 from __future__ import annotations
 
@@ -48,3 +48,4 @@ class SourceExtractionAgent:
             started_at=started_at,
             last_progress_at=last_progress_at,
         )
+

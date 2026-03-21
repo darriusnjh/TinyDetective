@@ -19,12 +19,14 @@ from fastapi.staticfiles import StaticFiles
 
 from models.schemas import InvestigationCreateRequest, InvestigationListItem, InvestigationResponse
 from services.investigation_orchestrator import InvestigationOrchestrator
+from services.logging_config import LOG_PATH, configure_logging
 from services.settings import settings
 from services.investigation_store import InvestigationStore
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = BASE_DIR / "frontend"
+logger = configure_logging()
 
 app = FastAPI(
     title="TinyDetective Counterfeit Research MVP",
@@ -59,6 +61,11 @@ async def index() -> FileResponse:
     return FileResponse(FRONTEND_DIR / "index.html")
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon() -> FileResponse:
+    return FileResponse(FRONTEND_DIR / "favicon.svg", media_type="image/svg+xml")
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {
@@ -73,6 +80,7 @@ async def config() -> dict[str, object]:
         "brand_landing_page_url": settings.brand_landing_page_url,
         "ecommerce_store_urls": settings.ecommerce_store_urls,
         "tinyfish_browser_profile": settings.tinyfish_browser_profile,
+        "log_path": str(LOG_PATH),
     }
 
 
@@ -84,6 +92,7 @@ async def list_investigations(limit: int = Query(default=12, ge=1, le=100)) -> l
 @app.post("/investigate", response_model=InvestigationResponse)
 async def investigate(payload: InvestigationCreateRequest) -> InvestigationResponse:
     investigation = await store.create(payload)
+    logger.info("Investigation queued: %s", investigation.investigation_id)
     asyncio.create_task(orchestrator.run_investigation(investigation.investigation_id))
     return investigation
 

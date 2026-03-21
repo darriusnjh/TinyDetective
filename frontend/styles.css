@@ -1,4 +1,4 @@
-:root {
+﻿:root {
   --bg: oklch(0.96 0.01 82);
   --bg-deep: oklch(0.93 0.015 78);
   --surface: color-mix(in oklch, white 88%, var(--bg) 12%);
@@ -815,3 +815,4 @@ code {
     scroll-behavior: auto !important;
   }
 }
+
