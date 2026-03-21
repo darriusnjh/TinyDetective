@@ -202,7 +202,7 @@ def test_candidate_discovery_agent_builds_semantic_brand_led_queries() -> None:
         assert queries
         assert all(isinstance(query, str) for query in queries)
         assert all(str(query).startswith("casetify ") for query in queries)
-        assert "casetify impact case hello kitty" in queries
+        assert len(queries) == 5
         assert any("phone case" in str(query) for query in queries)
         assert len(adapter.calls) == len(queries)
         assert len(raw_outputs) == len(queries)

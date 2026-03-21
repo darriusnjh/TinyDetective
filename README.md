@@ -21,7 +21,7 @@ This version is wired to the real TinyFish service for live browser automations.
 3. `CandidateDiscoveryAgent` searches the target comparison sites with TinyFish.
 4. `ProductComparisonAgent` scores similarity and counterfeit risk.
 5. `EvidenceAgent` converts comparisons into audit-friendly evidence.
-6. `RankingAgent` returns up to 3 precision-oriented matches.
+6. `RankingAgent` returns up to 5 precision-oriented matches.
 7. `ResearchSummaryAgent` writes the final source-level investigation summary.
 8. `GET /investigation/{id}` returns status, reports, and raw agent outputs.
 

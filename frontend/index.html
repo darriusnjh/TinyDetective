@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -16,137 +16,323 @@
     />
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
-  <body>
+  <body data-phase="prompt">
     <div class="noise"></div>
     <main class="shell">
-      <section class="hero">
-        <p class="eyebrow">Counterfeit Research Console</p>
-        <h1>TinyDetective</h1>
-        <p class="lede">
-          Review suspicious marketplace listings against official product pages
-          with a live multi-agent workflow built for research ops.
-        </p>
+      <section class="scene prompt-scene" id="prompt-scene" data-scene="prompt">
+        <div class="scene-inner prompt-inner">
+          <header class="prompt-header">
+            <h1>TinyDetective</h1>
+            <p class="eyebrow">Counterfeit Research Console</p>
+          </header>
+
+          <form id="investigation-form" class="prompt-form">
+            <label class="sr-only" for="source-urls">Official product page URLs</label>
+            <div class="composer" id="prompt-composer">
+              <textarea
+                id="source-urls"
+                rows="1"
+                spellcheck="false"
+                placeholder="What product would you like to protect today?"
+              ></textarea>
+
+              <div class="composer-footer">
+                <p class="config-note sr-only" id="config-note"></p>
+                <button type="submit" id="run-button">Investigate</button>
+              </div>
+            </div>
+
+            <textarea id="comparison-sites" hidden aria-hidden="true"></textarea>
+          </form>
+
+          <div class="logo-marquee" aria-label="Supported marketplaces">
+            <div class="logo-track">
+              <span class="logo-mark logo-mark--shopee">
+                <img src="/static/logos/shopee.png" alt="Shopee" />
+              </span>
+              <span class="logo-mark logo-mark--lazada">
+                <img src="/static/logos/lazada.png" alt="Lazada" />
+              </span>
+              <span class="logo-mark logo-mark--facebook">
+                <img src="/static/logos/facebook.svg" alt="Facebook" />
+              </span>
+              <span class="logo-mark logo-mark--amazon">
+                <img src="/static/logos/amazon.png" alt="Amazon" />
+              </span>
+              <span class="logo-mark logo-mark--ebay">
+                <img src="/static/logos/ebay.svg" alt="eBay" />
+              </span>
+              <span class="logo-mark logo-mark--shopee" aria-hidden="true">
+                <img src="/static/logos/shopee.png" alt="" />
+              </span>
+              <span class="logo-mark logo-mark--lazada" aria-hidden="true">
+                <img src="/static/logos/lazada.png" alt="" />
+              </span>
+              <span class="logo-mark logo-mark--facebook" aria-hidden="true">
+                <img src="/static/logos/facebook.svg" alt="" />
+              </span>
+              <span class="logo-mark logo-mark--amazon" aria-hidden="true">
+                <img src="/static/logos/amazon.png" alt="" />
+              </span>
+              <span class="logo-mark logo-mark--ebay" aria-hidden="true">
+                <img src="/static/logos/ebay.svg" alt="" />
+              </span>
+            </div>
+          </div>
+        </div>
       </section>
 
-      <section class="panel form-panel">
-        <div class="panel-header">
-          <div>
-            <p class="section-label">Inputs</p>
-            <h2>Start Investigation</h2>
-          </div>
-          <div class="status-pill" id="status-pill" aria-live="polite">Idle</div>
-        </div>
+      <section class="scene progress-scene" id="progress-scene" data-scene="progress">
+        <div class="scene-inner progress-inner">
+          <section class="panel progress-panel">
+            <div class="panel-header">
+              <div>
+                <p class="section-label">Workflow</p>
+                <h2>Agent Progress</h2>
+              </div>
+              <div class="status-pill" id="status-pill" aria-live="polite">Idle</div>
+            </div>
 
-        <form id="investigation-form">
-          <p class="config-note" id="config-note"></p>
-          <div class="field-block">
-            <label for="source-urls">Official product page URLs</label>
-            <p class="field-copy">
-              Use one exact product page per line. The extractor is strongest on
-              individual product pages, not brand homepages.
+            <div class="progress-overview">
+              <div
+                class="progress-track"
+                id="progress-track"
+                role="progressbar"
+                aria-label="Investigation progress"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-valuenow="0"
+              >
+                <div class="progress-fill" id="progress-fill"></div>
+              </div>
+              <p class="progress-overview-text sr-only" id="progress-overview">
+                No investigation running yet.
+              </p>
+            </div>
+
+            <div class="timeline-shell">
+              <div class="timeline-rail" aria-label="Investigation steps">
+                <div class="timeline-rail-step" data-timeline-rail="source">
+                  <span class="timeline-rail-number">01</span>
+                  <div class="timeline-rail-copy">
+                    <p class="timeline-kicker">Step 1</p>
+                    <strong>Source Page</strong>
+                  </div>
+                </div>
+                <div class="timeline-rail-step" data-timeline-rail="search">
+                  <span class="timeline-rail-number">02</span>
+                  <div class="timeline-rail-copy">
+                    <p class="timeline-kicker">Step 2</p>
+                    <strong>Live Search</strong>
+                  </div>
+                </div>
+                <div class="timeline-rail-step" data-timeline-rail="candidates">
+                  <span class="timeline-rail-number">03</span>
+                  <div class="timeline-rail-copy">
+                    <p class="timeline-kicker">Step 3</p>
+                    <strong>Candidate Intake</strong>
+                  </div>
+                </div>
+                <div class="timeline-rail-step" data-timeline-rail="analysis">
+                  <span class="timeline-rail-number">04</span>
+                  <div class="timeline-rail-copy">
+                    <p class="timeline-kicker">Step 4</p>
+                    <strong>Reasoning Graph</strong>
+                  </div>
+                </div>
+                <div class="timeline-rail-step" data-timeline-rail="ranking">
+                  <span class="timeline-rail-number">05</span>
+                  <div class="timeline-rail-copy">
+                    <p class="timeline-kicker">Step 5</p>
+                    <strong>Ranking Ladder</strong>
+                  </div>
+                </div>
+              </div>
+
+              <div class="timeline-viewport">
+                <div class="timeline-track" id="progress-list">
+                  <article class="timeline-step" data-timeline-step="source">
+                    <div class="timeline-marker">
+                      <span class="timeline-number">01</span>
+                    </div>
+                    <div class="timeline-card">
+                      <div class="timeline-card-header">
+                        <div>
+                          <p class="timeline-kicker">Step 1</p>
+                          <h3>Source Page</h3>
+                        </div>
+                        <span class="timeline-step-state">Pending</span>
+                      </div>
+                      <p class="timeline-step-note" id="timeline-source-note">
+                        Waiting for the official product page.
+                      </p>
+                      <div class="source-stage">
+                        <div class="browser-frame">
+                          <div class="browser-bar">
+                            <div class="browser-chrome" aria-hidden="true">
+                              <span></span>
+                              <span></span>
+                              <span></span>
+                            </div>
+                            <p class="browser-url" id="timeline-source-url">No source URL selected yet.</p>
+                            <a
+                              class="browser-open"
+                              id="timeline-source-link"
+                              href="#"
+                              target="_blank"
+                              rel="noreferrer"
+                              hidden
+                            >
+                              Open
+                            </a>
+                          </div>
+                          <iframe
+                            id="timeline-source-frame"
+                            class="browser-preview"
+                            title="Source product page"
+                            loading="lazy"
+                            referrerpolicy="no-referrer"
+                          ></iframe>
+                        </div>
+                        <div class="source-meta" id="timeline-source-meta" aria-live="polite"></div>
+                      </div>
+                    </div>
+                  </article>
+
+                  <article class="timeline-step" data-timeline-step="search">
+                    <div class="timeline-marker">
+                      <span class="timeline-number">02</span>
+                    </div>
+                    <div class="timeline-card">
+                      <div class="timeline-card-header">
+                        <div>
+                          <p class="timeline-kicker">Step 2</p>
+                          <h3>Live Search Behavior</h3>
+                        </div>
+                        <span class="timeline-step-state">Pending</span>
+                      </div>
+                      <p class="timeline-step-note" id="timeline-search-note">
+                        Search queries will appear here as TinyFish fans out across marketplaces.
+                      </p>
+                      <div class="search-log" id="timeline-search-log" aria-live="polite"></div>
+                    </div>
+                  </article>
+
+                  <article class="timeline-step" data-timeline-step="candidates">
+                    <div class="timeline-marker">
+                      <span class="timeline-number">03</span>
+                    </div>
+                    <div class="timeline-card">
+                      <div class="timeline-card-header">
+                        <div>
+                          <p class="timeline-kicker">Step 3</p>
+                          <h3>Candidate Intake</h3>
+                        </div>
+                        <span class="timeline-step-state">Pending</span>
+                      </div>
+                      <p class="timeline-step-note" id="timeline-candidates-note">
+                        Candidate listings will stream in as search results are captured.
+                      </p>
+                      <div class="candidate-stream" id="timeline-candidate-stream" aria-live="polite"></div>
+                    </div>
+                  </article>
+
+                  <article class="timeline-step" data-timeline-step="analysis">
+                    <div class="timeline-marker">
+                      <span class="timeline-number">04</span>
+                    </div>
+                    <div class="timeline-card">
+                      <div class="timeline-card-header">
+                        <div>
+                          <p class="timeline-kicker">Step 4</p>
+                          <h3>Reasoning Graph</h3>
+                        </div>
+                        <span class="timeline-step-state">Pending</span>
+                      </div>
+                      <p class="timeline-step-note" id="timeline-analysis-note">
+                        Comparison signals will assemble here once candidate pages are inspected.
+                      </p>
+                      <div class="analysis-stage">
+                        <div class="signal-graph" id="timeline-signal-graph" aria-live="polite"></div>
+                        <div class="analysis-log" id="timeline-analysis-log" aria-live="polite"></div>
+                      </div>
+                    </div>
+                  </article>
+
+                  <article class="timeline-step" data-timeline-step="ranking">
+                    <div class="timeline-marker">
+                      <span class="timeline-number">05</span>
+                    </div>
+                    <div class="timeline-card">
+                      <div class="timeline-card-header">
+                        <div>
+                          <p class="timeline-kicker">Step 5</p>
+                          <h3>Ranking Ladder</h3>
+                        </div>
+                        <span class="timeline-step-state">Pending</span>
+                      </div>
+                      <p class="timeline-step-note" id="timeline-ranking-note">
+                        Matches will settle into rank as scores firm up.
+                      </p>
+                      <ol class="ranking-ladder" id="timeline-ranking-list" aria-live="polite"></ol>
+                      <div class="ranking-actions">
+                        <button type="button" class="report-action" id="generate-report-button" disabled>
+                          Generate report
+                        </button>
+                      </div>
+                    </div>
+                  </article>
+                </div>
+              </div>
+            </div>
+
+            <p class="progress-text" id="progress-text" aria-live="polite">
+              Waiting for an investigation to start.
             </p>
-            <textarea
-              id="source-urls"
-              spellcheck="false"
-              placeholder="One URL per line&#10;https://www.casetify.com/product/impact-case-hello-kitty"
-            ></textarea>
-          </div>
+          </section>
 
-          <div class="field-block">
-            <label for="comparison-sites">Marketplace search targets</label>
-            <p class="field-copy">
-              Add domains or URLs to search manually, or leave this blank to use
-              your configured defaults.
-            </p>
-            <textarea
-              id="comparison-sites"
-              spellcheck="false"
-              placeholder="Optional if configured in .env&#10;One URL or domain per line&#10;https://shopee.sg/&#10;https://www.lazada.sg/"
-            ></textarea>
-          </div>
+          <section class="past-runs-panel" hidden>
+            <div class="past-runs-list" id="past-runs" aria-live="polite"></div>
+          </section>
 
-          <div class="button-row">
-            <button type="submit" id="run-button">Run Investigation</button>
-            <p class="form-footnote">
-              This starts a live TinyFish-backed investigation and streams the
-              result state below.
-            </p>
-          </div>
-        </form>
+          <section class="results-panel" hidden>
+            <div id="results" aria-live="polite"></div>
+          </section>
+        </div>
       </section>
 
-      <section class="panel progress-panel">
-        <div class="panel-header">
-          <div>
-            <p class="section-label">Workflow</p>
-            <h2>Agent Progress</h2>
-          </div>
-        </div>
-        <div class="progress-overview">
-          <div
-            class="progress-track"
-            id="progress-track"
-            role="progressbar"
-            aria-label="Investigation progress"
-            aria-valuemin="0"
-            aria-valuemax="100"
-            aria-valuenow="0"
-          >
-            <div class="progress-fill" id="progress-fill"></div>
-          </div>
-          <p class="progress-overview-text" id="progress-overview">
-            No investigation running yet.
-          </p>
-        </div>
-        <ol class="progress-list" id="progress-list">
-          <li data-step="source_extraction" data-status="pending">
-            <span class="step-label">Extract official product details</span>
-            <span class="step-state">Pending</span>
-          </li>
-          <li data-step="candidate_discovery" data-status="pending">
-            <span class="step-label">Search configured marketplaces</span>
-            <span class="step-state">Pending</span>
-          </li>
-          <li data-step="product_comparison" data-status="pending">
-            <span class="step-label">Compare candidate listings</span>
-            <span class="step-state">Pending</span>
-          </li>
-          <li data-step="evidence" data-status="pending">
-            <span class="step-label">Assemble supporting evidence</span>
-            <span class="step-state">Pending</span>
-          </li>
-          <li data-step="ranking" data-status="pending">
-            <span class="step-label">Rank suspicious matches</span>
-            <span class="step-state">Pending</span>
-          </li>
-          <li data-step="research_summary" data-status="pending">
-            <span class="step-label">Summarize the investigation</span>
-            <span class="step-state">Pending</span>
-          </li>
-        </ol>
-        <p class="progress-text" id="progress-text" aria-live="polite">
-          Waiting for an investigation to start.
-        </p>
-      </section>
+      <section class="scene report-scene" id="report-scene" data-scene="report">
+        <div class="scene-inner report-inner">
+          <section class="panel report-panel">
+            <div class="panel-header report-header">
+              <div>
+                <p class="section-label">Report</p>
+                <h2>Evidence Dossier</h2>
+              </div>
+              <div class="report-actions">
+                <button type="button" class="panel-action" id="report-back-button">Back to investigation</button>
+                <button type="button" class="panel-action" id="report-open-button" hidden>Open in new tab</button>
+              </div>
+            </div>
 
-      <section class="panel past-runs-panel">
-        <div class="panel-header">
-          <div>
-            <p class="section-label">History</p>
-            <h2>Past Runs</h2>
-          </div>
-        </div>
-        <div class="past-runs-list" id="past-runs" aria-live="polite"></div>
-      </section>
+            <div class="report-meta">
+              <p class="report-note" id="report-note">
+                Generate a report from step 5 to review it here.
+              </p>
+              <p class="report-caption" id="report-meta">
+                The embedded PDF will be prepared from the captured investigation data.
+              </p>
+            </div>
 
-      <section class="panel results-panel">
-        <div class="panel-header">
-          <div>
-            <p class="section-label">Results</p>
-            <h2>Investigation Results</h2>
-          </div>
+            <div class="report-frame-shell">
+              <iframe
+                id="report-pdf-frame"
+                class="report-pdf-frame"
+                title="Investigation report PDF"
+              ></iframe>
+            </div>
+          </section>
         </div>
-        <div id="results" aria-live="polite"></div>
       </section>
     </main>
 
@@ -175,7 +361,7 @@
       </div>
     </template>
 
+    <script src="/static/vendor/jspdf.umd.min.js"></script>
     <script src="/static/app.js" defer></script>
   </body>
 </html>
-
