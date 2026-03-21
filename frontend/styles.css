@@ -1,0 +1,259 @@
+:root {
+  --bg: #f2eee6;
+  --ink: #171413;
+  --panel: rgba(255, 250, 242, 0.84);
+  --line: rgba(23, 20, 19, 0.14);
+  --accent: #b9542a;
+  --good: #25684d;
+  --warn: #9a3025;
+  --shadow: 0 18px 55px rgba(29, 18, 10, 0.14);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Manrope", sans-serif;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at top left, rgba(185, 84, 42, 0.18), transparent 28%),
+    radial-gradient(circle at 80% 20%, rgba(36, 104, 77, 0.16), transparent 24%),
+    linear-gradient(135deg, #f6f1e8 0%, #ece4d9 100%);
+  min-height: 100vh;
+}
+
+.noise {
+  position: fixed;
+  inset: 0;
+  opacity: 0.06;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(0, 0, 0, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 0, 0, 0.05) 1px, transparent 1px);
+  background-size: 8px 8px;
+}
+
+.shell {
+  width: min(1180px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 40px 0 64px;
+}
+
+.hero {
+  padding: 28px 0 32px;
+}
+
+.eyebrow,
+.section-label {
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 0.72rem;
+  color: rgba(23, 20, 19, 0.6);
+}
+
+h1,
+h2 {
+  margin: 0;
+  font-family: "Instrument Serif", serif;
+  font-weight: 400;
+  line-height: 0.96;
+}
+
+h1 {
+  font-size: clamp(3.6rem, 10vw, 7rem);
+  margin-top: 6px;
+}
+
+h2 {
+  font-size: clamp(2rem, 4vw, 3rem);
+}
+
+.lede {
+  max-width: 680px;
+  font-size: 1.05rem;
+  line-height: 1.65;
+  margin-top: 18px;
+}
+
+.panel {
+  background: var(--panel);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--line);
+  border-radius: 28px;
+  box-shadow: var(--shadow);
+  padding: 24px;
+  margin-top: 18px;
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: start;
+  margin-bottom: 18px;
+}
+
+.status-pill {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 10px 16px;
+  font-size: 0.9rem;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+form {
+  display: grid;
+  gap: 12px;
+}
+
+label {
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.config-note {
+  margin: 0 0 4px;
+  color: rgba(23, 20, 19, 0.72);
+  line-height: 1.5;
+}
+
+textarea {
+  width: 100%;
+  min-height: 124px;
+  border-radius: 20px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.78);
+  padding: 16px 18px;
+  font: inherit;
+  resize: vertical;
+}
+
+button {
+  justify-self: start;
+  border: 0;
+  border-radius: 999px;
+  padding: 14px 22px;
+  font: inherit;
+  font-weight: 800;
+  color: #fff8f0;
+  background: linear-gradient(135deg, #171413 0%, #b9542a 100%);
+  cursor: pointer;
+  transition: transform 180ms ease, box-shadow 180ms ease;
+  box-shadow: 0 12px 32px rgba(185, 84, 42, 0.22);
+}
+
+button:hover {
+  transform: translateY(-1px);
+}
+
+.progress-list,
+.score-grid,
+.signals,
+.evidence-list,
+.agent-log-content {
+  display: grid;
+  gap: 10px;
+}
+
+.progress-list {
+  padding-left: 20px;
+}
+
+.progress-text {
+  margin-bottom: 0;
+  color: rgba(23, 20, 19, 0.72);
+}
+
+.report-card,
+.match-card {
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.72);
+  padding: 18px;
+}
+
+.report-card + .report-card,
+.match-card + .match-card {
+  margin-top: 14px;
+}
+
+.report-summary {
+  font-size: 1.05rem;
+  font-weight: 700;
+  margin-bottom: 14px;
+}
+
+.report-source,
+.match-header,
+.score-chip,
+.signal,
+.evidence-item,
+.agent-log-item {
+  border-radius: 16px;
+  padding: 12px 14px;
+  background: rgba(242, 238, 230, 0.9);
+}
+
+.report-source {
+  line-height: 1.6;
+  margin-bottom: 14px;
+}
+
+.matches {
+  display: grid;
+  gap: 12px;
+}
+
+.score-grid {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  margin-top: 12px;
+}
+
+.score-chip strong {
+  display: block;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: rgba(23, 20, 19, 0.58);
+  margin-bottom: 4px;
+}
+
+.signal {
+  display: inline-flex;
+  width: fit-content;
+  margin-right: 8px;
+  background: rgba(154, 48, 37, 0.1);
+  color: var(--warn);
+  border: 1px solid rgba(154, 48, 37, 0.18);
+}
+
+details {
+  margin-top: 12px;
+}
+
+summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.empty-state {
+  color: rgba(23, 20, 19, 0.68);
+}
+
+@media (max-width: 760px) {
+  .shell {
+    width: min(100% - 20px, 1180px);
+    padding-top: 18px;
+  }
+
+  .panel {
+    padding: 18px;
+    border-radius: 22px;
+  }
+
+  .panel-header {
+    flex-direction: column;
+  }
+}

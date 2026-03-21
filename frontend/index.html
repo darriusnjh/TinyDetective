@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TinyDetective</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Manrope:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="noise"></div>
+    <main class="shell">
+      <section class="hero">
+        <p class="eyebrow">Counterfeit Research Console</p>
+        <h1>TinyDetective</h1>
+        <p class="lede">
+          Investigate product listings against official source URLs with a modular
+          multi-agent workflow inspired by MarqVision-style research ops.
+        </p>
+      </section>
+
+      <section class="panel form-panel">
+        <div class="panel-header">
+          <div>
+            <p class="section-label">Inputs</p>
+            <h2>Launch Investigation</h2>
+          </div>
+          <div class="status-pill" id="status-pill">Idle</div>
+        </div>
+
+        <form id="investigation-form">
+          <p class="config-note" id="config-note"></p>
+          <label for="source-urls">Official source product URLs</label>
+          <textarea
+            id="source-urls"
+            placeholder="One URL per line&#10;https://www.casetify.com/product/impact-case-hello-kitty"
+          ></textarea>
+
+          <label for="comparison-sites">Comparison sites or marketplace domains</label>
+          <textarea
+            id="comparison-sites"
+            placeholder="Optional if configured in .env&#10;One URL or domain per line&#10;https://shopee.sg/&#10;https://www.lazada.sg/"
+          ></textarea>
+
+          <button type="submit" id="run-button">Run Investigation</button>
+        </form>
+      </section>
+
+      <section class="panel progress-panel">
+        <div class="panel-header">
+          <div>
+            <p class="section-label">Pipeline</p>
+            <h2>Agent Progress</h2>
+          </div>
+        </div>
+        <ol class="progress-list">
+          <li>Source Extraction Agent</li>
+          <li>Candidate Discovery Agent</li>
+          <li>Product Comparison Agent</li>
+          <li>Evidence Agent</li>
+          <li>Ranking Agent</li>
+          <li>Research Summary Agent</li>
+        </ol>
+        <p class="progress-text" id="progress-text">
+          Waiting for an investigation to start.
+        </p>
+      </section>
+
+      <section class="panel results-panel">
+        <div class="panel-header">
+          <div>
+            <p class="section-label">Results</p>
+            <h2>Investigation Output</h2>
+          </div>
+        </div>
+        <div id="results"></div>
+      </section>
+    </main>
+
+    <template id="report-template">
+      <article class="report-card">
+        <div class="report-summary"></div>
+        <div class="report-source"></div>
+        <div class="matches"></div>
+        <details class="agent-log">
+          <summary>Agent reasoning</summary>
+          <div class="agent-log-content"></div>
+        </details>
+      </article>
+    </template>
+
+    <template id="match-template">
+      <div class="match-card">
+        <div class="match-header"></div>
+        <div class="score-grid"></div>
+        <p class="reason"></p>
+        <div class="signals"></div>
+        <details>
+          <summary>Evidence</summary>
+          <div class="evidence-list"></div>
+        </details>
+      </div>
+    </template>
+
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>
