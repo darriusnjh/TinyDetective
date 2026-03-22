@@ -5,8 +5,11 @@ const sourceUrlsInput = document.getElementById("source-urls");
 const comparisonSitesInput = document.getElementById("comparison-sites");
 const resultsNode = document.getElementById("results");
 const pastRunsNode = document.getElementById("past-runs");
+const pastCasesNode = document.getElementById("past-cases");
 const historyDropdown = document.getElementById("history-dropdown");
 const historyButton = document.getElementById("history-button");
+const caseHistoryDropdown = document.getElementById("case-history-dropdown");
+const caseHistoryButton = document.getElementById("case-history-button");
 const statusPill = document.getElementById("status-pill");
 const progressText = document.getElementById("progress-text");
 const progressOverview = document.getElementById("progress-overview");
@@ -26,13 +29,27 @@ const timelineSignalGraph = document.getElementById("timeline-signal-graph");
 const timelineAnalysisLog = document.getElementById("timeline-analysis-log");
 const timelineRankingList = document.getElementById("timeline-ranking-list");
 const generateReportButton = document.getElementById("generate-report-button");
-const newInvestigationButton = document.getElementById("new-investigation-button");
 const reportPdfFrame = document.getElementById("report-pdf-frame");
 const reportMeta = document.getElementById("report-meta");
 const reportNote = document.getElementById("report-note");
 const reportBackButton = document.getElementById("report-back-button");
 const reportOpenButton = document.getElementById("report-open-button");
-const reportNewButton = document.getElementById("report-new-button");
+const newInvestigationButton = document.getElementById("new-investigation-button");
+const caseTitle = document.getElementById("case-title");
+const caseSubtitle = document.getElementById("case-subtitle");
+const caseStatusPill = document.getElementById("case-status-pill");
+const caseProgressText = document.getElementById("case-progress-text");
+const caseProgressTrack = document.getElementById("case-progress-track");
+const caseProgressFill = document.getElementById("case-progress-fill");
+const caseProfileSummary = document.getElementById("case-profile-summary");
+const caseSeedSummary = document.getElementById("case-seed-summary");
+const caseSuspectListings = document.getElementById("case-suspect-listings");
+const caseEvidenceGrid = document.getElementById("case-evidence-grid");
+const caseDraft = document.getElementById("case-draft");
+const caseActivityLog = document.getElementById("case-activity-log");
+const caseAgentLog = document.getElementById("case-agent-log");
+const caseBackButton = document.getElementById("case-back-button");
+const caseGenerateReportButton = document.getElementById("case-generate-report-button");
 const timelineTrack = document.getElementById("progress-list");
 const timelineNotes = {
   source: document.getElementById("timeline-source-note"),
@@ -45,22 +62,34 @@ const timelineNotes = {
 let pollTimer = null;
 let currentInvestigationId = null;
 let pastRunsCache = [];
+let pastCasesCache = [];
 let currentPhase = body.dataset.phase || "prompt";
 let lastSubmittedSourceUrl = "";
 let activeTimelineStage = "source";
 let latestInvestigationPayload = null;
 let appConfig = null;
-let currentReportDocumentUrl = null;
+let currentReportPdfUrl = null;
 let reportGenerationInFlight = false;
+let caseReportGenerationInFlight = false;
+let casePollTimer = null;
+let currentCaseId = null;
+let latestCasePayload = null;
+let previousPhaseBeforeCase = "progress";
+let previousPhaseBeforeReport = "progress";
 
 const defaultRunButtonLabel = runButton.textContent;
 const defaultGenerateReportButtonLabel = generateReportButton?.textContent || "Generate report";
+const defaultCaseGenerateReportButtonLabel =
+  caseGenerateReportButton?.textContent || "Generate report";
 const persistedInvestigationStorageKey = "tinydetective:last-investigation-id";
+const persistedCaseStorageKey = "tinydetective:last-case-id";
 const progressStepDefinitions = [
   { key: "source_extraction", label: "Extract official product details" },
   { key: "candidate_discovery", label: "Search configured marketplaces" },
+  { key: "candidate_triage", label: "Triage candidate pool with OpenAI" },
   { key: "product_comparison", label: "Compare candidate listings" },
   { key: "evidence", label: "Assemble supporting evidence" },
+  { key: "reasoning_enrichment", label: "Refine reasoning with OpenAI" },
   { key: "ranking", label: "Rank suspicious matches" },
   { key: "research_summary", label: "Summarize the investigation" },
 ];
@@ -93,6 +122,8 @@ const statusLabels = {
   delayed: "Delayed",
   completed: "Completed",
   failed: "Failed",
+  reviewed: "Reviewed",
+  exported: "Exported",
 };
 const progressStateLabels = {
   pending: "Pending",
@@ -186,10 +217,30 @@ function getRiskColor(value) {
   return "hsl(145 58% 38%)";
 }
 
-function humanizeFieldName(value) {
-  return String(value || "field")
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (character) => character.toUpperCase());
+function humanizeFieldName(value, { capitalize = true } = {}) {
+  const normalized = String(value || "field")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!normalized) {
+    return "field";
+  }
+
+  if (!capitalize) {
+    return normalized.toLowerCase();
+  }
+
+  return normalized.replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+function formatReasonText(value) {
+  return String(value || "")
+    .replace(/\b[a-z0-9]+(?:[_-]+[a-z0-9]+)+\b/gi, (token) =>
+      humanizeFieldName(token, { capitalize: false })
+    )
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function humanizeSignal(signal) {
@@ -242,7 +293,9 @@ function getRiskReasonLines(match) {
     if (normalizeScore(match.counterfeit_risk_score) < 0.35) {
       lines.push("Few direct counterfeit indicators were detected in the captured evidence.");
     } else {
-      lines.push(match.reason || "The backend did not return a more specific counterfeit-risk rationale.");
+      lines.push(
+        formatReasonText(match.reason || "The backend did not return a more specific counterfeit-risk rationale.")
+      );
     }
   }
 
@@ -279,44 +332,19 @@ function getMatchReasonLines(match) {
   }
 
   if (lines.length === 0) {
-    lines.push(match.reason || "The backend did not return a more specific match rationale.");
+    lines.push(formatReasonText(match.reason || "The backend did not return a more specific match rationale."));
   }
 
   return [...new Set(lines)];
 }
 
 function sanitizePlainText(value) {
-  const raw = String(value ?? "");
-  const normalized = typeof raw.normalize === "function" ? raw.normalize("NFKD") : raw;
-
-  return normalized
+  return String(value ?? "")
     .replace(/[\u2018\u2019]/g, "'")
     .replace(/[\u201c\u201d]/g, '"')
     .replace(/[\u2013\u2014]/g, "-")
     .replace(/\u2026/g, "...")
-    .replace(/[\u00b7\u2022]/g, " - ")
     .replace(/\u00a0/g, " ")
-    .replace(/\u2122/g, "(TM)")
-    .replace(/\u00ae/g, "(R)")
-    .replace(/\u00a9/g, "(C)")
-    .replace(/[【〔〖〘［]/g, "[")
-    .replace(/[】〕〗〙］]/g, "]")
-    .replace(/[（]/g, "(")
-    .replace(/[）]/g, ")")
-    .replace(/[：]/g, ":")
-    .replace(/[，]/g, ",")
-    .replace(/[；]/g, ";")
-    .replace(/[／]/g, "/")
-    .replace(/[｜]/g, "|")
-    .replace(/[＋]/g, "+")
-    .replace(/[＝]/g, "=")
-    .replace(/[％]/g, "%")
-    .replace(/[＆]/g, "&")
-    .replace(/[＃]/g, "#")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
-    .replace(/[^\x20-\x7e]/g, " ")
-    .replace(/\s+/g, " ")
     .trim();
 }
 
@@ -440,7 +468,7 @@ function getReportLimitations(report) {
   return gaps;
 }
 
-function buildInvestigationPdfFallback(payload) {
+function buildInvestigationPdf(payload) {
   const jsPdfApi = window.jspdf?.jsPDF;
   if (!jsPdfApi) {
     throw new Error("The PDF renderer is not available in this browser session.");
@@ -455,13 +483,12 @@ function buildInvestigationPdfFallback(payload) {
 
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
-  const margin = 40;
-  const footerHeight = 24;
+  const margin = 48;
   const contentWidth = pageWidth - margin * 2;
   let cursorY = margin;
 
   const ensureSpace = (height = 18) => {
-    if (cursorY + height <= pageHeight - margin - footerHeight) {
+    if (cursorY + height <= pageHeight - margin) {
       return;
     }
     doc.addPage();
@@ -469,42 +496,42 @@ function buildInvestigationPdfFallback(payload) {
   };
 
   const drawRule = () => {
-    ensureSpace(12);
+    ensureSpace(16);
     doc.setDrawColor(204, 198, 188);
-    doc.setLineWidth(0.6);
+    doc.setLineWidth(0.7);
     doc.line(margin, cursorY, pageWidth - margin, cursorY);
-    cursorY += 10;
+    cursorY += 16;
   };
 
   const addKicker = (text) => {
     ensureSpace(12);
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(8.5);
+    doc.setFontSize(9);
     doc.setTextColor(132, 124, 113);
     doc.text(sanitizePlainText(String(text || "").toUpperCase()), margin, cursorY);
-    cursorY += 11;
+    cursorY += 14;
   };
 
   const addHeading = (text, size = 18) => {
+    const lines = doc.splitTextToSize(sanitizePlainText(text), contentWidth);
+    ensureSpace(lines.length * (size + 4));
     doc.setFont("helvetica", "bold");
     doc.setFontSize(size);
     doc.setTextColor(54, 46, 39);
-    const lines = doc.splitTextToSize(sanitizePlainText(text), contentWidth);
-    ensureSpace(lines.length * (size + 2));
     doc.text(lines, margin, cursorY);
-    cursorY += lines.length * (size + 2);
+    cursorY += lines.length * (size + 4);
   };
 
   const addParagraph = (text, options = {}) => {
-    const fontSize = options.fontSize || 9.75;
-    const lineHeight = options.lineHeight || 13.5;
+    const fontSize = options.fontSize || 11;
+    const lineHeight = options.lineHeight || 16;
+    const lines = doc.splitTextToSize(sanitizePlainText(text), contentWidth);
+    ensureSpace(lines.length * lineHeight + 6);
     doc.setFont("helvetica", options.bold ? "bold" : "normal");
     doc.setFontSize(fontSize);
     doc.setTextColor(options.muted ? 110 : 70, options.muted ? 103 : 62, options.muted ? 95 : 54);
-    const lines = doc.splitTextToSize(sanitizePlainText(text), contentWidth);
-    ensureSpace(lines.length * lineHeight + 4);
     doc.text(lines, margin, cursorY);
-    cursorY += lines.length * lineHeight + 4;
+    cursorY += lines.length * lineHeight + 6;
   };
 
   const addBulletList = (items, options = {}) => {
@@ -513,66 +540,35 @@ function buildInvestigationPdfFallback(payload) {
       return;
     }
 
-    const fontSize = options.fontSize || 9.5;
-    const lineHeight = options.lineHeight || 12.5;
+    const fontSize = options.fontSize || 11;
+    const lineHeight = options.lineHeight || 15;
     doc.setFont("helvetica", "normal");
     doc.setFontSize(fontSize);
     doc.setTextColor(70, 62, 54);
 
     values.forEach((item) => {
       const bulletX = margin + 4;
-      const textX = margin + 12;
-      const lines = doc.splitTextToSize(item, contentWidth - 16);
-      ensureSpace(lines.length * lineHeight + 3);
+      const textX = margin + 14;
+      const lines = doc.splitTextToSize(item, contentWidth - 18);
+      ensureSpace(lines.length * lineHeight + 4);
       doc.text("-", bulletX, cursorY);
       doc.text(lines, textX, cursorY);
-      cursorY += lines.length * lineHeight + 3;
+      cursorY += lines.length * lineHeight + 4;
     });
 
-    cursorY += 1;
+    cursorY += 2;
   };
 
-  const addDefinitionList = (rows, options = {}) => {
+  const addDefinitionList = (rows) => {
     const filteredRows = (rows || []).filter(([, value]) => value !== null && value !== undefined && value !== "");
     if (filteredRows.length === 0) {
       return;
     }
 
-    const fontSize = options.fontSize || 9.5;
-    const lineHeight = options.lineHeight || 12.5;
-    const labelWidth = options.labelWidth || 112;
-    const valueX = margin + labelWidth;
-    const valueWidth = contentWidth - labelWidth;
-
     filteredRows.forEach(([label, value]) => {
-      const labelText = sanitizePlainText(label);
-      const valueText = sanitizePlainText(value);
-
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(fontSize);
-      const labelLines = doc.splitTextToSize(labelText, labelWidth - 10);
-
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(fontSize);
-      const valueLines = doc.splitTextToSize(valueText, valueWidth);
-
-      const rowLineCount = Math.max(labelLines.length, valueLines.length);
-      const rowHeight = rowLineCount * lineHeight + 1;
-      ensureSpace(rowHeight + 1);
-
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(fontSize);
-      doc.setTextColor(97, 88, 79);
-      doc.text(labelLines, margin, cursorY);
-
-      doc.setFont("helvetica", "normal");
-      doc.setTextColor(70, 62, 54);
-      doc.text(valueLines, valueX, cursorY);
-
-      cursorY += rowHeight;
+      const line = `${sanitizePlainText(label)}: ${sanitizePlainText(value)}`;
+      addParagraph(line, { fontSize: 10.5, lineHeight: 15 });
     });
-
-    cursorY += 1;
   };
 
   const addSection = (kicker, heading, body) => {
@@ -588,10 +584,10 @@ function buildInvestigationPdfFallback(payload) {
   const brandWebsite = getBrandWebsite(payload);
 
   addKicker("TinyDetective");
-  addHeading("Counterfeit Research Evidence Dossier", 20);
+  addHeading("Counterfeit Research Evidence Dossier", 22);
   addParagraph(
     "Prepared from the captured TinyDetective investigation outputs for internal review, marketplace complaint preparation, and counsel handoff. This report is an evidence summary, not legal advice.",
-    { fontSize: 10.5, lineHeight: 14.5 }
+    { fontSize: 11.5, lineHeight: 17 }
   );
   addDefinitionList([
     ["Investigation ID", payload?.investigation_id || "Unavailable"],
@@ -599,11 +595,10 @@ function buildInvestigationPdfFallback(payload) {
     ["Created", formatReportDate(payload?.created_at)],
     ["Updated", formatReportDate(payload?.updated_at)],
     ["Brand website", brandWebsite],
-  ], { labelWidth: 106 });
+  ]);
 
   reports.forEach((report, index) => {
     const sourceProduct = report.extracted_source_product || {};
-    const sourceProductFeatures = (sourceProduct.features || []).filter(Boolean);
     const candidateTasks = getCandidateTasks(report);
     const discoveredCandidates = collectDiscoveredCandidates(report);
     const completedComparisons = collectCompletedComparisons(report);
@@ -626,7 +621,7 @@ function buildInvestigationPdfFallback(payload) {
         ["Report summary", report.summary || "No summary returned."],
         ["Report error", report.error || ""],
         ["Official-store exclusions", report.excluded_official_store_count ?? 0],
-      ], { labelWidth: 114 });
+      ]);
     });
 
     addSection(`Source ${index + 1}`, "Official Product Reference", () => {
@@ -643,16 +638,8 @@ function buildInvestigationPdfFallback(payload) {
         ["Color", sourceProduct.color || "Unavailable"],
         ["Size", sourceProduct.size || "Unavailable"],
         ["Material", sourceProduct.material || "Unavailable"],
+        ["Features", (sourceProduct.features || []).join(", ") || "Unavailable"],
       ]);
-
-      if (sourceProductFeatures.length > 0) {
-        addParagraph("Key features", {
-          bold: true,
-          fontSize: 9.5,
-          lineHeight: 12.5,
-        });
-        addBulletList(sourceProductFeatures, { fontSize: 9, lineHeight: 11.5 });
-      }
     });
 
     addSection(`Source ${index + 1}`, "Ranked Listings of Concern", () => {
@@ -666,7 +653,7 @@ function buildInvestigationPdfFallback(payload) {
       rankedListings.slice(0, 5).forEach((match, rankIndex) => {
         addParagraph(
           `#${rankIndex + 1} ${match.candidate_product?.title || match.candidate_product?.model || match.product_url}`,
-          { bold: true, fontSize: 10.5, lineHeight: 13.5 }
+          { bold: true, fontSize: 12, lineHeight: 17 }
         );
         addDefinitionList([
           ["Listing URL", match.product_url],
@@ -674,18 +661,16 @@ function buildInvestigationPdfFallback(payload) {
           ["Seller", match.candidate_product?.seller_name || "Unavailable"],
           ["Risk score", Number(match.counterfeit_risk_score || 0).toFixed(2)],
           ["Match score", Number(match.match_score || 0).toFixed(2)],
-        ], { labelWidth: 96 });
+        ]);
         addParagraph(`Observed rationale: ${match.reason || "No reason returned."}`, {
-          fontSize: 9.25,
-          lineHeight: 12.5,
+          fontSize: 10.5,
+          lineHeight: 15,
         });
         addBulletList(
-          getRiskReasonLines(match).map((line) => `Risk reasoning: ${line}`),
-          { fontSize: 9, lineHeight: 11.5 }
+          getRiskReasonLines(match).map((line) => `Risk reasoning: ${line}`)
         );
         addBulletList(
-          getMatchReasonLines(match).map((line) => `Match reasoning: ${line}`),
-          { fontSize: 9, lineHeight: 11.5 }
+          getMatchReasonLines(match).map((line) => `Match reasoning: ${line}`)
         );
         addBulletList(
           (match.evidence || []).slice(0, 5).map((item) => {
@@ -697,9 +682,9 @@ function buildInvestigationPdfFallback(payload) {
                 : "";
             return `Evidence - ${humanizeFieldName(item.field)}: ${item.note}${sourceValue}${candidateValue}`;
           }),
-          { fontSize: 8.75, lineHeight: 11.25 }
+          { fontSize: 10, lineHeight: 14 }
         );
-        cursorY += 2;
+        cursorY += 4;
       });
     });
 
@@ -792,1029 +777,293 @@ function buildInvestigationPdfFallback(payload) {
     });
   });
 
-  const pageCount = doc.getNumberOfPages();
-  for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
-    doc.setPage(pageNumber);
-    doc.setDrawColor(225, 218, 209);
-    doc.setLineWidth(0.5);
-    doc.line(margin, pageHeight - margin + 2, pageWidth - margin, pageHeight - margin + 2);
+  return doc.output("blob");
+}
 
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8);
-    doc.setTextColor(132, 124, 113);
-    doc.text("TinyDetective dossier", margin, pageHeight - margin + 14);
-    doc.text(`Page ${pageNumber} of ${pageCount}`, pageWidth - margin, pageHeight - margin + 14, {
-      align: "right",
-    });
+function buildSellerCasePdf(payload) {
+  const jsPdfApi = window.jspdf?.jsPDF;
+  if (!jsPdfApi) {
+    throw new Error("The PDF renderer is not available in this browser session.");
   }
+
+  const doc = new jsPdfApi({
+    orientation: "portrait",
+    unit: "pt",
+    format: "letter",
+    compress: true,
+  });
+
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const margin = 48;
+  const contentWidth = pageWidth - margin * 2;
+  let cursorY = margin;
+
+  const ensureSpace = (height = 18) => {
+    if (cursorY + height <= pageHeight - margin) {
+      return;
+    }
+    doc.addPage();
+    cursorY = margin;
+  };
+
+  const drawRule = () => {
+    ensureSpace(16);
+    doc.setDrawColor(204, 198, 188);
+    doc.setLineWidth(0.7);
+    doc.line(margin, cursorY, pageWidth - margin, cursorY);
+    cursorY += 16;
+  };
+
+  const addKicker = (text) => {
+    ensureSpace(12);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.setTextColor(132, 124, 113);
+    doc.text(sanitizePlainText(String(text || "").toUpperCase()), margin, cursorY);
+    cursorY += 14;
+  };
+
+  const addHeading = (text, size = 18) => {
+    const lines = doc.splitTextToSize(sanitizePlainText(text), contentWidth);
+    ensureSpace(lines.length * (size + 4));
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(size);
+    doc.setTextColor(54, 46, 39);
+    doc.text(lines, margin, cursorY);
+    cursorY += lines.length * (size + 4);
+  };
+
+  const addParagraph = (text, options = {}) => {
+    const fontSize = options.fontSize || 11;
+    const lineHeight = options.lineHeight || 16;
+    const lines = doc.splitTextToSize(sanitizePlainText(text), contentWidth);
+    ensureSpace(lines.length * lineHeight + 6);
+    doc.setFont("helvetica", options.bold ? "bold" : "normal");
+    doc.setFontSize(fontSize);
+    doc.setTextColor(options.muted ? 110 : 70, options.muted ? 103 : 62, options.muted ? 95 : 54);
+    doc.text(lines, margin, cursorY);
+    cursorY += lines.length * lineHeight + 6;
+  };
+
+  const addBulletList = (items, options = {}) => {
+    const values = (items || []).map((item) => sanitizePlainText(item)).filter(Boolean);
+    if (values.length === 0) {
+      return;
+    }
+    const fontSize = options.fontSize || 11;
+    const lineHeight = options.lineHeight || 15;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(fontSize);
+    doc.setTextColor(70, 62, 54);
+    values.forEach((item) => {
+      const bulletX = margin + 4;
+      const textX = margin + 14;
+      const lines = doc.splitTextToSize(item, contentWidth - 18);
+      ensureSpace(lines.length * lineHeight + 4);
+      doc.text("-", bulletX, cursorY);
+      doc.text(lines, textX, cursorY);
+      cursorY += lines.length * lineHeight + 4;
+    });
+    cursorY += 2;
+  };
+
+  const addDefinitionList = (rows) => {
+    const filteredRows = (rows || []).filter(([, value]) => value !== null && value !== undefined && value !== "");
+    filteredRows.forEach(([label, value]) => {
+      addParagraph(`${sanitizePlainText(label)}: ${sanitizePlainText(value)}`, {
+        fontSize: 10.5,
+        lineHeight: 15,
+      });
+    });
+  };
+
+  const addSection = (kicker, heading, body) => {
+    if (cursorY > margin + 8) {
+      drawRule();
+    }
+    addKicker(kicker);
+    addHeading(heading, 16);
+    body();
+  };
+
+  const profile = payload?.seller_profile || {};
+  const selectedListing = payload?.selected_listing || {};
+  const officialMatches = payload?.official_product_matches || [];
+  const suspectListings = payload?.suspect_listings || [];
+  const evidence = payload?.evidence || [];
+  const draft = payload?.action_request_draft || {};
+
+  addKicker("TinyDetective");
+  addHeading("Seller Enforcement Case Dossier", 22);
+  addParagraph(
+    "Prepared from the captured TinyDetective seller-case workflow for marketplace trust-and-safety review and internal escalation. This report is an evidence summary, not legal advice.",
+    { fontSize: 11.5, lineHeight: 17 }
+  );
+  addDefinitionList([
+    ["Seller case ID", payload?.case_id || "Unavailable"],
+    ["Origin investigation", payload?.investigation_id || "Unavailable"],
+    ["Status", payload?.status || "Unavailable"],
+    ["Created", formatReportDate(payload?.created_at)],
+    ["Updated", formatReportDate(payload?.updated_at)],
+    ["Marketplace", payload?.marketplace || "Unavailable"],
+  ]);
+
+  addSection("Seller Case", "Seller Profile", () => {
+    addDefinitionList([
+      ["Seller", profile.seller_name || payload?.seller_name || "Unavailable"],
+      ["Storefront URL", profile.seller_url || payload?.seller_store_url || "Unavailable"],
+      ["Seller ID", profile.seller_id || "Unavailable"],
+      ["Rating", profile.rating ?? "Unavailable"],
+      ["Ratings count", profile.rating_count ?? "Unavailable"],
+      ["Followers", profile.follower_count ?? "Unavailable"],
+      ["Location", profile.location || "Unavailable"],
+      ["Official-store claims", (profile.official_store_claims || []).join(", ") || "None observed"],
+      ["Entry URLs analyzed", (profile.entry_urls || []).length || 0],
+      ["Storefront shards analyzed", (profile.storefront_shard_urls || []).length || 0],
+    ]);
+  });
+
+  addSection("Seller Case", "Seed Listing", () => {
+    addDefinitionList([
+      ["Listing URL", selectedListing.product_url || payload?.product_url || "Unavailable"],
+      ["Title", selectedListing.candidate_product?.title || "Unavailable"],
+      ["Seller", selectedListing.candidate_product?.seller_name || payload?.seller_name || "Unavailable"],
+      ["Risk score", Number(selectedListing.counterfeit_risk_score || 0).toFixed(2)],
+      ["Match score", Number(selectedListing.match_score || 0).toFixed(2)],
+      ["Reason", selectedListing.reason || "No reason returned."],
+    ]);
+  });
+
+  addSection("Seller Case", "Official Product Matches", () => {
+    if (!officialMatches.length) {
+      addParagraph("No official product matches were stored for this case.", { muted: true });
+      return;
+    }
+
+    officialMatches.forEach((match, index) => {
+      addParagraph(`#${index + 1} ${match.product_url}`, { bold: true, fontSize: 12, lineHeight: 17 });
+      addDefinitionList([
+        ["Marketplace listing", match.product_url],
+        ["Official product URL", match.official_product_url || "Unavailable"],
+        ["Match confidence", Number(match.match_confidence || 0).toFixed(2)],
+        ["Rationale", match.rationale || "No rationale returned."],
+      ]);
+    });
+  });
+
+  addSection("Seller Case", "Ranked Seller Listings of Concern", () => {
+    if (!suspectListings.length) {
+      addParagraph("No suspect seller listings were stored in this case.", { muted: true });
+      return;
+    }
+
+    suspectListings.forEach((listing, index) => {
+      addParagraph(
+        `#${index + 1} ${listing.candidate_product?.title || listing.product_url}`,
+        { bold: true, fontSize: 12, lineHeight: 17 }
+      );
+      addDefinitionList([
+        ["Listing URL", listing.product_url],
+        ["Seller", listing.candidate_product?.seller_name || "Unavailable"],
+        ["Risk score", Number(listing.counterfeit_risk_score || 0).toFixed(2)],
+        ["Match score", Number(listing.match_score || 0).toFixed(2)],
+        ["Official comparison basis", listing.comparison_basis_source_url || "Unavailable"],
+        ["Official match confidence", Number(listing.comparison_basis_confidence || 0).toFixed(2)],
+      ]);
+      addBulletList(
+        (listing.suspicious_signals || []).map((signal) => `Signal: ${humanizeFieldName(signal)}`),
+        { fontSize: 10, lineHeight: 14 }
+      );
+      addBulletList(
+        (listing.evidence || []).slice(0, 5).map((item) => {
+          const sourceValue =
+            item.source_value !== null && item.source_value !== undefined ? ` | source: ${item.source_value}` : "";
+          const candidateValue =
+            item.candidate_value !== null && item.candidate_value !== undefined
+              ? ` | candidate: ${item.candidate_value}`
+              : "";
+          return `Evidence - ${humanizeFieldName(item.field)}: ${item.note}${sourceValue}${candidateValue}`;
+        }),
+        { fontSize: 10, lineHeight: 14 }
+      );
+    });
+  });
+
+  addSection("Seller Case", "Case Evidence", () => {
+    addBulletList(
+      evidence.length
+        ? evidence.map(
+            (item) =>
+              `${item.title}: ${item.note}${item.reference_url ? ` | reference: ${item.reference_url}` : ""}`
+          )
+        : ["No seller-case evidence objects were stored."]
+    );
+  });
+
+  addSection("Seller Case", "Draft Marketplace Request", () => {
+    addDefinitionList([
+      ["Case title", draft.case_title || "Unavailable"],
+      ["Recommended action", draft.recommended_action || "Unavailable"],
+      ["Suspected violation", draft.suspected_violation_type || "Unavailable"],
+      ["Confidence", Number(draft.confidence || 0).toFixed(2)],
+    ]);
+    addParagraph(draft.summary || "No case summary returned.");
+    addParagraph(draft.reasoning || "No case reasoning returned.", { fontSize: 10.5, lineHeight: 15 });
+    addParagraph(draft.request_text || "No request text returned.", { fontSize: 10.5, lineHeight: 15 });
+  });
+
+  addSection("Seller Case", "Operational Trace", () => {
+    addBulletList(
+      (payload?.raw_agent_outputs || []).length
+        ? (payload.raw_agent_outputs || []).map((task) => {
+            const details = [task.agent_name || "agent", task.status || "unknown", ...buildOperationalTrace(task)];
+            return details.join(" | ");
+          })
+        : ["No operational trace was captured."]
+    );
+  });
 
   return doc.output("blob");
 }
 
-function formatReportHtmlValue(value) {
-  return escapeHtml(sanitizePlainText(value));
-}
-
-function renderReportFactGrid(rows) {
-  const filteredRows = (rows || []).filter(([, value]) => value !== null && value !== undefined && value !== "");
-  if (filteredRows.length === 0) {
-    return "";
-  }
-
-  return `
-    <dl class="pdf-report-facts">
-      ${filteredRows
-        .map(
-          ([label, value]) => `
-            <div class="pdf-report-fact">
-              <dt>${formatReportHtmlValue(label)}</dt>
-              <dd>${formatReportHtmlValue(value)}</dd>
-            </div>
-          `
-        )
-        .join("")}
-    </dl>
-  `;
-}
-
-function renderReportListBlock(items, emptyMessage = "", className = "pdf-report-list") {
-  const values = (items || []).map((item) => sanitizePlainText(item)).filter(Boolean);
-  if (values.length === 0) {
-    return emptyMessage
-      ? `<p class="pdf-report-empty">${formatReportHtmlValue(emptyMessage)}</p>`
-      : "";
-  }
-
-  return `
-    <ul class="${className}">
-      ${values.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
-    </ul>
-  `;
-}
-
-function renderReportCard(title, body, options = {}) {
-  const kicker = options.kicker || "Section";
-  return `
-    <article class="pdf-report-card ${options.className || ""}">
-      <p class="pdf-report-card-kicker">${formatReportHtmlValue(kicker)}</p>
-      <h3 class="pdf-report-card-title">${formatReportHtmlValue(title)}</h3>
-      ${body}
-    </article>
-  `;
-}
-
-function buildInvestigationReportMarkup(payload) {
-  const reports = payload?.reports || [];
-  const brandWebsite = getBrandWebsite(payload);
-
-  const topSummary = `
-    <section class="pdf-report-shell pdf-report-shell--hero">
-      <p class="pdf-report-eyebrow">TinyDetective</p>
-      <h1 class="pdf-report-title">Counterfeit Research Evidence Dossier</h1>
-      <p class="pdf-report-intro">
-        Prepared from the captured TinyDetective investigation outputs for internal review, marketplace complaint
-        preparation, and counsel handoff. This report is an evidence summary, not legal advice.
-      </p>
-      <div class="pdf-report-meta-grid">
-        ${[
-          ["Investigation ID", payload?.investigation_id || "Unavailable"],
-          ["Status", payload?.status || "Unavailable"],
-          ["Created", formatReportDate(payload?.created_at)],
-          ["Updated", formatReportDate(payload?.updated_at)],
-          ["Brand website", brandWebsite],
-        ]
-          .map(
-            ([label, value]) => `
-              <div class="pdf-report-meta-card">
-                <p class="pdf-report-meta-label">${formatReportHtmlValue(label)}</p>
-                <p class="pdf-report-meta-value">${formatReportHtmlValue(value)}</p>
-              </div>
-            `
-          )
-          .join("")}
-      </div>
-    </section>
-  `;
-
-  const sourceBlocks = reports
-    .map((report, index) => {
-      const sourceProduct = report.extracted_source_product || {};
-      const sourceProductFeatures = (sourceProduct.features || []).filter(Boolean);
-      const candidateTasks = getCandidateTasks(report);
-      const discoveredCandidates = collectDiscoveredCandidates(report);
-      const completedComparisons = collectCompletedComparisons(report);
-      const rankedListings = getRankingSnapshots(report);
-      const suggestedActions = getSuggestedActionsForReport(report);
-      const suspiciousUrls = rankedListings.map((item) => String(item.product_url));
-      const operationalTrace = (report.raw_agent_outputs || []).map((task) => {
-        const details = [
-          task.agent_name || "agent",
-          task.status || "unknown",
-          ...buildOperationalTrace(task),
-        ];
-        return details.join(" | ");
-      });
-
-      const rankedListingsMarkup =
-        rankedListings.length === 0
-          ? `<p class="pdf-report-empty">No ranked suspicious or lookalike listings were available in this run.</p>`
-          : `
-              <div class="pdf-report-match-stack">
-                ${rankedListings
-                  .slice(0, 5)
-                  .map((match, rankIndex) => {
-                    const reasoningLines = [
-                      ...getRiskReasonLines(match).map((line) => `Risk reasoning: ${line}`),
-                      ...getMatchReasonLines(match).map((line) => `Match reasoning: ${line}`),
-                      ...(match.evidence || []).slice(0, 5).map((item) => {
-                        const sourceValue =
-                          item.source_value !== null && item.source_value !== undefined
-                            ? ` | source: ${item.source_value}`
-                            : "";
-                        const candidateValue =
-                          item.candidate_value !== null && item.candidate_value !== undefined
-                            ? ` | candidate: ${item.candidate_value}`
-                            : "";
-                        return `Evidence - ${humanizeFieldName(item.field)}: ${item.note}${sourceValue}${candidateValue}`;
-                      }),
-                    ];
-
-                    return `
-                      <article class="pdf-report-match-card">
-                        <div class="pdf-report-match-head">
-                          <div>
-                            <p class="pdf-report-match-index">#${rankIndex + 1}</p>
-                            <h4 class="pdf-report-match-title">${formatReportHtmlValue(
-                              match.candidate_product?.title || match.candidate_product?.model || match.product_url
-                            )}</h4>
-                          </div>
-                          <div class="pdf-report-chip-row">
-                            <span class="pdf-report-chip">Risk ${formatReportHtmlValue(
-                              Number(match.counterfeit_risk_score || 0).toFixed(2)
-                            )}</span>
-                            <span class="pdf-report-chip">Match ${formatReportHtmlValue(
-                              Number(match.match_score || 0).toFixed(2)
-                            )}</span>
-                            <span class="pdf-report-chip">${formatReportHtmlValue(
-                              match.marketplace || formatHostname(match.product_url)
-                            )}</span>
-                          </div>
-                        </div>
-                        ${renderReportFactGrid([
-                          ["Listing URL", match.product_url],
-                          ["Seller", match.candidate_product?.seller_name || "Unavailable"],
-                          ["Observed rationale", match.reason || "No reason returned."],
-                        ])}
-                        ${renderReportListBlock(
-                          reasoningLines,
-                          "No supporting reasoning was returned.",
-                          "pdf-report-list pdf-report-list--tight"
-                        )}
-                      </article>
-                    `;
-                  })
-                  .join("")}
-              </div>
-            `;
-
-      return `
-        <section class="pdf-report-shell pdf-report-shell--source">
-          <div class="pdf-report-source-header">
-            <p class="pdf-report-eyebrow">Source ${index + 1}</p>
-            <h2 class="pdf-report-source-title">${formatReportHtmlValue(
-              sourceProduct.product_name || sourceProduct.model || report.source_url || `Source ${index + 1}`
-            )}</h2>
-            <p class="pdf-report-source-summary">${formatReportHtmlValue(
-              report.summary || "No summary returned."
-            )}</p>
-          </div>
-
-          <div class="pdf-report-grid pdf-report-grid--two">
-            ${renderReportCard(
-              "Investigation Scope",
-              renderReportFactGrid([
-                ["Input URL", report.source_url || lastSubmittedSourceUrl],
-                ["Brand website", brandWebsite],
-                ["Report summary", report.summary || "No summary returned."],
-                ["Report error", report.error || ""],
-                ["Official-store exclusions", report.excluded_official_store_count ?? 0],
-              ]),
-              { kicker: "Case file" }
-            )}
-            ${renderReportCard(
-              "Official Product Reference",
-              [
-                renderReportFactGrid([
-                  ["Brand", sourceProduct.brand || "Unavailable"],
-                  ["Product name", sourceProduct.product_name || "Unavailable"],
-                  ["Category", sourceProduct.category || "Unavailable"],
-                  ["Subcategory", sourceProduct.subcategory || "Unavailable"],
-                  ["SKU", sourceProduct.sku || "Unavailable"],
-                  ["Model", sourceProduct.model || "Unavailable"],
-                  [
-                    "Price",
-                    sourceProduct.price !== null && sourceProduct.price !== undefined
-                      ? formatCompactCurrency(sourceProduct.price, sourceProduct.currency)
-                      : "Unavailable",
-                  ],
-                  ["Color", sourceProduct.color || "Unavailable"],
-                  ["Size", sourceProduct.size || "Unavailable"],
-                  ["Material", sourceProduct.material || "Unavailable"],
-                ]),
-                sourceProductFeatures.length > 0
-                  ? `
-                      <div class="pdf-report-subsection">
-                        <p class="pdf-report-mini-label">Key features</p>
-                        ${renderReportListBlock(
-                          sourceProductFeatures,
-                          "",
-                          "pdf-report-list pdf-report-list--tight"
-                        )}
-                      </div>
-                    `
-                  : "",
-              ].join(""),
-              { kicker: "Official reference" }
-            )}
-          </div>
-
-          ${renderReportCard("Ranked Listings of Concern", rankedListingsMarkup, {
-            kicker: "Priority queue",
-          })}
-
-          <div class="pdf-report-grid pdf-report-grid--two">
-            ${renderReportCard(
-              "Suspicious URLs",
-              renderReportListBlock(
-                suspiciousUrls,
-                "No suspicious URLs were ranked in this run."
-              ),
-              { kicker: "Link set" }
-            )}
-            ${renderReportCard(
-              "Marketplace Search Coverage",
-              candidateTasks.length === 0
-                ? `<p class="pdf-report-empty">No marketplace search tasks were recorded.</p>`
-                : renderReportListBlock(
-                    candidateTasks.map((task) => {
-                      const query =
-                        task.output_payload?.search_query || task.input_payload?.search_query || "Unavailable";
-                      const site =
-                        task.output_payload?.comparison_site ||
-                        task.input_payload?.comparison_site ||
-                        "Unavailable";
-                      const candidateCount = task.output_payload?.candidate_count;
-                      return `${formatHostname(site)} | query: ${query} | status: ${task.status || "unknown"}${
-                        candidateCount !== undefined ? ` | candidates: ${candidateCount}` : ""
-                      }`;
-                    })
-                  ),
-              { kicker: "Search log" }
-            )}
-          </div>
-
-          ${renderReportCard(
-            "Discovered Listing Inventory",
-            discoveredCandidates.length === 0
-              ? `<p class="pdf-report-empty">No candidate listings were captured.</p>`
-              : renderReportListBlock(
-                  discoveredCandidates.map((candidate) => {
-                    const title = candidate.title || candidate.model || candidate.product_url;
-                    const price =
-                      candidate.price !== null && candidate.price !== undefined
-                        ? formatCompactCurrency(candidate.price, candidate.currency)
-                        : "Price unavailable";
-                    return `${title} | ${candidate.product_url} | marketplace: ${
-                      candidate.marketplace || formatHostname(candidate.product_url)
-                    } | seller: ${candidate.seller_name || "Unavailable"} | price: ${price} | query: ${
-                      candidate.discovery_query || "Unavailable"
-                    }`;
-                  }),
-                  "",
-                  "pdf-report-list pdf-report-list--compact"
-                ),
-            { kicker: "Inventory" }
-          )}
-
-          ${renderReportCard(
-            "Comparison Evidence Inventory",
-            completedComparisons.length === 0
-              ? `<p class="pdf-report-empty">No completed comparison records were available.</p>`
-              : renderReportListBlock(
-                  completedComparisons.map((comparison) => {
-                    const signals = (comparison.suspicious_signals || []).join(", ") || "None";
-                    return `${
-                      comparison.candidate_product?.title ||
-                      comparison.candidate_product?.model ||
-                      comparison.product_url
-                    } | ${comparison.product_url} | risk ${Number(
-                      comparison.counterfeit_risk_score || 0
-                    ).toFixed(2)} | match ${Number(comparison.match_score || 0).toFixed(2)} | signals: ${signals}`;
-                  }),
-                  "",
-                  "pdf-report-list pdf-report-list--compact"
-                ),
-            { kicker: "Evidence ledger" }
-          )}
-
-          <div class="pdf-report-grid pdf-report-grid--two">
-            ${renderReportCard(
-              "Recommended Next Actions",
-              renderReportListBlock(suggestedActions, ""),
-              { kicker: "Action queue" }
-            )}
-            ${renderReportCard(
-              "Limitations and Gaps",
-              renderReportListBlock(getReportLimitations(report), ""),
-              { kicker: "Guardrails" }
-            )}
-          </div>
-
-          ${renderReportCard(
-            "Complaint-Prep Checklist",
-            renderReportListBlock([
-              "Preserve the direct listing URL for each suspicious entry and record the capture date and time on any screenshot or exported artifact.",
-              "Attach trademark ownership, authorization, or registration materials separately before filing any formal complaint or legal action.",
-              "Confirm seller identity, marketplace storefront details, and product identifiers before requesting takedown or asserting infringement.",
-              "Separate factual observations from legal conclusions; use this dossier as supporting evidence for counsel or trust-and-safety review.",
-              "If a direct link becomes unavailable, capture a screenshot of the listing or ad together with the visible seller and product details.",
-            ]),
-            { kicker: "Preparation" }
-          )}
-
-          ${renderReportCard(
-            "Operational Trace",
-            renderReportListBlock(
-              operationalTrace.length > 0 ? operationalTrace : ["No operational trace was captured."],
-              "",
-              "pdf-report-list pdf-report-list--compact"
-            ),
-            { kicker: "Runtime trace" }
-          )}
-
-          <div class="pdf-report-footer">
-            <span>TinyDetective research dossier</span>
-            <span>Updated ${formatReportHtmlValue(formatReportDate(payload?.updated_at))}</span>
-          </div>
-        </section>
-      `;
-    })
-    .join("");
-
-  return `
-    <div class="pdf-report-root">
-      ${topSummary}
-      ${sourceBlocks}
-    </div>
-  `;
-}
-
-function createInvestigationReportElement(payload) {
-  const container = document.createElement("div");
-  container.className = "pdf-report-mount";
-  container.setAttribute("aria-hidden", "true");
-  container.style.position = "fixed";
-  container.style.left = "-100000px";
-  container.style.top = "0";
-  container.style.width = "820px";
-  container.style.pointerEvents = "none";
-  container.style.zIndex = "-1";
-
-  container.innerHTML = `
-    <style>
-      .pdf-report-root {
-        width: 760px;
-        padding: 24px;
-        color: #433a32;
-        font-family: "Manrope", sans-serif;
-        background:
-          radial-gradient(circle at 12% 14%, rgba(239, 228, 208, 0.78), transparent 26%),
-          radial-gradient(circle at 86% 4%, rgba(214, 229, 228, 0.44), transparent 30%),
-          linear-gradient(180deg, #fbf8f2 0%, #f2eadf 100%);
-      }
-
-      .pdf-report-root,
-      .pdf-report-root *,
-      .pdf-report-root *::before,
-      .pdf-report-root *::after {
-        box-sizing: border-box;
-      }
-
-      .pdf-report-shell {
-        break-inside: avoid;
-        page-break-inside: avoid;
-        padding: 28px;
-        border: 1px solid #d8cfc1;
-        border-radius: 28px;
-        background: rgba(255, 255, 255, 0.86);
-        box-shadow:
-          0 22px 60px rgba(75, 60, 42, 0.08),
-          inset 0 1px 0 rgba(255, 255, 255, 0.78);
-      }
-
-      .pdf-report-shell + .pdf-report-shell {
-        margin-top: 18px;
-      }
-
-      .pdf-report-shell--source {
-        padding-top: 24px;
-      }
-
-      .pdf-report-eyebrow,
-      .pdf-report-card-kicker,
-      .pdf-report-mini-label,
-      .pdf-report-meta-label,
-      .pdf-report-match-index {
-        margin: 0;
-        text-transform: uppercase;
-        letter-spacing: 0.18em;
-        font-size: 10px;
-        font-weight: 800;
-        color: #928577;
-      }
-
-      .pdf-report-title,
-      .pdf-report-source-title {
-        margin: 0;
-        font-family: "Instrument Serif", serif;
-        font-weight: 400;
-        letter-spacing: -0.02em;
-        color: #352c26;
-      }
-
-      .pdf-report-title {
-        font-size: 42px;
-        line-height: 0.95;
-      }
-
-      .pdf-report-source-title {
-        font-size: 28px;
-        line-height: 0.98;
-      }
-
-      .pdf-report-intro,
-      .pdf-report-source-summary,
-      .pdf-report-empty,
-      .pdf-report-note,
-      .pdf-report-meta-value,
-      .pdf-report-fact dd,
-      .pdf-report-list {
-        color: #5a5048;
-      }
-
-      .pdf-report-intro,
-      .pdf-report-source-summary {
-        margin: 14px 0 0;
-        font-size: 14px;
-        line-height: 1.55;
-      }
-
-      .pdf-report-meta-grid,
-      .pdf-report-grid {
-        display: grid;
-        gap: 16px;
-        margin-top: 22px;
-      }
-
-      .pdf-report-meta-grid,
-      .pdf-report-grid--two {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-      }
-
-      .pdf-report-meta-card,
-      .pdf-report-card,
-      .pdf-report-match-card {
-        break-inside: avoid;
-        page-break-inside: avoid;
-        border: 1px solid #e1d8cc;
-        border-radius: 20px;
-        background: linear-gradient(180deg, rgba(255, 255, 255, 0.94) 0%, rgba(248, 243, 235, 0.92) 100%);
-      }
-
-      .pdf-report-meta-card {
-        padding: 14px 16px;
-      }
-
-      .pdf-report-meta-value {
-        margin: 8px 0 0;
-        font-size: 13px;
-        line-height: 1.5;
-        word-break: break-word;
-      }
-
-      .pdf-report-card {
-        padding: 18px;
-      }
-
-      .pdf-report-card-title {
-        margin: 8px 0 0;
-        font-size: 18px;
-        font-weight: 800;
-        line-height: 1.18;
-        color: #352c26;
-      }
-
-      .pdf-report-facts {
-        display: grid;
-        gap: 10px;
-        margin: 14px 0 0;
-      }
-
-      .pdf-report-fact {
-        display: grid;
-        grid-template-columns: 116px minmax(0, 1fr);
-        gap: 12px;
-        align-items: start;
-      }
-
-      .pdf-report-fact dt {
-        margin: 0;
-        font-size: 12px;
-        font-weight: 800;
-        line-height: 1.4;
-        color: #827568;
-      }
-
-      .pdf-report-fact dd {
-        margin: 0;
-        font-size: 12px;
-        line-height: 1.55;
-        word-break: break-word;
-      }
-
-      .pdf-report-list {
-        margin: 14px 0 0;
-        padding-left: 18px;
-        display: grid;
-        gap: 8px;
-        font-size: 12px;
-        line-height: 1.5;
-      }
-
-      .pdf-report-list--tight {
-        gap: 6px;
-        font-size: 11.5px;
-      }
-
-      .pdf-report-list--compact {
-        gap: 5px;
-        font-size: 11px;
-        line-height: 1.45;
-      }
-
-      .pdf-report-match-stack {
-        display: grid;
-        gap: 12px;
-        margin-top: 14px;
-      }
-
-      .pdf-report-match-card {
-        padding: 14px;
-      }
-
-      .pdf-report-match-head {
-        display: grid;
-        gap: 10px;
-      }
-
-      .pdf-report-match-title {
-        margin: 8px 0 0;
-        font-size: 14px;
-        line-height: 1.35;
-        color: #352c26;
-      }
-
-      .pdf-report-chip-row {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-      }
-
-      .pdf-report-chip {
-        display: inline-flex;
-        align-items: center;
-        padding: 6px 10px;
-        border-radius: 999px;
-        background: #efe6d8;
-        color: #5d4d40;
-        font-size: 11px;
-        font-weight: 800;
-      }
-
-      .pdf-report-subsection {
-        margin-top: 14px;
-        padding-top: 14px;
-        border-top: 1px solid #e6ded2;
-      }
-
-      .pdf-report-footer {
-        margin-top: 16px;
-        display: flex;
-        justify-content: space-between;
-        gap: 16px;
-        font-size: 10px;
-        text-transform: uppercase;
-        letter-spacing: 0.16em;
-        color: #928577;
-      }
-    </style>
-    ${buildInvestigationReportMarkup(payload)}
-  `;
-
-  return container;
-}
-
-async function buildInvestigationPdf(payload) {
-  return buildInvestigationPdfFallback(payload);
-}
-
-function getInvestigationReportDocumentStyles() {
-  return `
-    :root {
-      color-scheme: light;
-    }
-
-    * {
-      box-sizing: border-box;
-    }
-
-    html,
-    body {
-      margin: 0;
-      padding: 0;
-      min-height: 100%;
-    }
-
-    body {
-      font-family: "Manrope", sans-serif;
-      color: #433a32;
-      line-height: 1.5;
-      background:
-        radial-gradient(circle at 12% 14%, rgba(239, 228, 208, 0.78), transparent 26%),
-        radial-gradient(circle at 86% 4%, rgba(214, 229, 228, 0.44), transparent 30%),
-        linear-gradient(180deg, #fbf8f2 0%, #f2eadf 100%);
-    }
-
-    .pdf-report-page {
-      width: min(1180px, calc(100% - 48px));
-      margin: 0 auto;
-      padding: 32px 0 48px;
-    }
-
-    .pdf-report-root {
-      display: grid;
-      gap: 18px;
-    }
-
-    .pdf-report-shell {
-      break-inside: avoid;
-      padding: 28px;
-      border: 1px solid #d8cfc1;
-      border-radius: 28px;
-      background: rgba(255, 255, 255, 0.86);
-      box-shadow:
-        0 22px 60px rgba(75, 60, 42, 0.08),
-        inset 0 1px 0 rgba(255, 255, 255, 0.78);
-    }
-
-    .pdf-report-eyebrow,
-    .pdf-report-card-kicker,
-    .pdf-report-mini-label,
-    .pdf-report-meta-label,
-    .pdf-report-match-index {
-      margin: 0;
-      text-transform: uppercase;
-      letter-spacing: 0.18em;
-      font-size: 10px;
-      font-weight: 800;
-      color: #928577;
-    }
-
-    .pdf-report-title,
-    .pdf-report-source-title {
-      margin: 0;
-      font-family: "Instrument Serif", serif;
-      font-weight: 400;
-      letter-spacing: -0.02em;
-      color: #352c26;
-      line-height: 0.96;
-    }
-
-    .pdf-report-title {
-      font-size: clamp(2.8rem, 5vw, 4.35rem);
-    }
-
-    .pdf-report-source-title {
-      font-size: clamp(2rem, 3vw, 2.6rem);
-    }
-
-    .pdf-report-intro,
-    .pdf-report-source-summary {
-      margin: 14px 0 0;
-      font-size: 1.02rem;
-      line-height: 1.55;
-      color: #5a5048;
-    }
-
-    .pdf-report-meta-grid,
-    .pdf-report-grid {
-      display: grid;
-      gap: 16px;
-      margin-top: 22px;
-    }
-
-    .pdf-report-meta-grid,
-    .pdf-report-grid--two {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .pdf-report-meta-card,
-    .pdf-report-card,
-    .pdf-report-match-card {
-      border: 1px solid #e1d8cc;
-      border-radius: 20px;
-      background: linear-gradient(180deg, rgba(255, 255, 255, 0.94) 0%, rgba(248, 243, 235, 0.92) 100%);
-    }
-
-    .pdf-report-meta-card {
-      padding: 14px 16px;
-    }
-
-    .pdf-report-meta-value {
-      margin: 8px 0 0;
-      font-size: 0.95rem;
-      line-height: 1.5;
-      color: #5a5048;
-      word-break: break-word;
-    }
-
-    .pdf-report-card {
-      padding: 18px;
-    }
-
-    .pdf-report-card-title {
-      margin: 8px 0 0;
-      font-size: 1.2rem;
-      font-weight: 800;
-      line-height: 1.18;
-      color: #352c26;
-    }
-
-    .pdf-report-facts {
-      display: grid;
-      gap: 10px;
-      margin: 14px 0 0;
-    }
-
-    .pdf-report-fact {
-      display: grid;
-      grid-template-columns: 116px minmax(0, 1fr);
-      gap: 12px;
-      align-items: start;
-    }
-
-    .pdf-report-fact dt {
-      margin: 0;
-      font-size: 0.83rem;
-      font-weight: 800;
-      line-height: 1.4;
-      color: #827568;
-    }
-
-    .pdf-report-fact dd {
-      margin: 0;
-      font-size: 0.9rem;
-      line-height: 1.55;
-      color: #5a5048;
-      word-break: break-word;
-    }
-
-    .pdf-report-list {
-      margin: 14px 0 0;
-      padding-left: 18px;
-      display: grid;
-      gap: 8px;
-      font-size: 0.92rem;
-      line-height: 1.5;
-      color: #5a5048;
-    }
-
-    .pdf-report-list--tight {
-      gap: 6px;
-      font-size: 0.88rem;
-    }
-
-    .pdf-report-list--compact {
-      gap: 5px;
-      font-size: 0.85rem;
-      line-height: 1.45;
-    }
-
-    .pdf-report-empty {
-      margin: 14px 0 0;
-      color: #5a5048;
-    }
-
-    .pdf-report-match-stack {
-      display: grid;
-      gap: 12px;
-      margin-top: 14px;
-    }
-
-    .pdf-report-match-card {
-      padding: 14px;
-    }
-
-    .pdf-report-match-head {
-      display: grid;
-      gap: 10px;
-    }
-
-    .pdf-report-match-title {
-      margin: 8px 0 0;
-      font-size: 1rem;
-      line-height: 1.35;
-      color: #352c26;
-    }
-
-    .pdf-report-chip-row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-    }
-
-    .pdf-report-chip {
-      display: inline-flex;
-      align-items: center;
-      padding: 6px 10px;
-      border-radius: 999px;
-      background: #efe6d8;
-      color: #5d4d40;
-      font-size: 0.78rem;
-      font-weight: 800;
-    }
-
-    .pdf-report-subsection {
-      margin-top: 14px;
-      padding-top: 14px;
-      border-top: 1px solid #e6ded2;
-    }
-
-    .pdf-report-footer {
-      margin-top: 16px;
-      display: flex;
-      justify-content: space-between;
-      gap: 16px;
-      font-size: 0.72rem;
-      text-transform: uppercase;
-      letter-spacing: 0.16em;
-      color: #928577;
-    }
-
-    .pdf-report-toolbar {
-      position: sticky;
-      top: 0;
-      z-index: 2;
-      display: flex;
-      justify-content: flex-end;
-      padding: 16px 24px 0;
-      background: linear-gradient(180deg, rgba(251, 248, 242, 0.95), rgba(251, 248, 242, 0));
-      backdrop-filter: blur(8px);
-    }
-
-    .pdf-report-print-button {
-      border: 0;
-      border-radius: 999px;
-      padding: 10px 16px;
-      background: #433a32;
-      color: #f8f1e7;
-      font: inherit;
-      font-weight: 700;
-      cursor: pointer;
-    }
-
-    @media (max-width: 860px) {
-      .pdf-report-page {
-        width: min(100% - 24px, 100%);
-        padding-top: 20px;
-      }
-
-      .pdf-report-meta-grid,
-      .pdf-report-grid--two {
-        grid-template-columns: 1fr;
-      }
-
-      .pdf-report-fact {
-        grid-template-columns: 1fr;
-        gap: 4px;
-      }
-
-      .pdf-report-shell {
-        padding: 20px;
-      }
-
-      .pdf-report-footer {
-        flex-direction: column;
-      }
-    }
-
-    @media print {
-      body {
-        background: #ffffff;
-      }
-
-      .pdf-report-toolbar {
-        display: none;
-      }
-
-      .pdf-report-page {
-        width: 100%;
-        padding: 0;
-      }
-
-      .pdf-report-shell,
-      .pdf-report-card,
-      .pdf-report-match-card,
-      .pdf-report-meta-card {
-        box-shadow: none;
-      }
-
-      @page {
-        size: letter;
-        margin: 0.55in;
-      }
-    }
-  `;
-}
-
-function buildInvestigationReportDocument(payload) {
-  return `<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>TinyDetective Evidence Dossier</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Manrope:wght@400;500;600;700;800&display=swap"
-      rel="stylesheet"
-    />
-    <style>${getInvestigationReportDocumentStyles()}</style>
-  </head>
-  <body>
-    <div class="pdf-report-toolbar">
-      <button class="pdf-report-print-button" type="button" onclick="window.print()">Print / Save PDF</button>
-    </div>
-    <main class="pdf-report-page">
-      ${buildInvestigationReportMarkup(payload)}
-    </main>
-  </body>
-</html>`;
-}
-
-function revokeCurrentReportDocumentUrl() {
-  if (!currentReportDocumentUrl) {
+function revokeCurrentReportPdfUrl() {
+  if (!currentReportPdfUrl) {
     return;
   }
-  window.URL.revokeObjectURL(currentReportDocumentUrl);
-  currentReportDocumentUrl = null;
+  window.URL.revokeObjectURL(currentReportPdfUrl);
+  currentReportPdfUrl = null;
 }
 
 function resetReportScene() {
-  revokeCurrentReportDocumentUrl();
+  revokeCurrentReportPdfUrl();
   if (reportPdfFrame) {
-    reportPdfFrame.removeAttribute("srcdoc");
     reportPdfFrame.removeAttribute("src");
   }
   if (reportOpenButton) {
     reportOpenButton.hidden = true;
-    reportOpenButton.textContent = "Open in new tab";
   }
   if (reportMeta) {
-    setTextContent(reportMeta, "The styled report will be prepared from the captured investigation data.");
+    setTextContent(reportMeta, "The embedded PDF will be prepared from the captured investigation data.");
   }
   if (reportNote) {
     setTextContent(reportNote, "Generate a report from step 5 to review it here.");
   }
 }
 
-function presentStyledReport(payload) {
-  const reportDocument = buildInvestigationReportDocument(payload);
-  const objectUrl = window.URL.createObjectURL(new Blob([reportDocument], { type: "text/html" }));
-  revokeCurrentReportDocumentUrl();
-  currentReportDocumentUrl = objectUrl;
+function presentPdfReport(blob, payload) {
+  const objectUrl = window.URL.createObjectURL(blob);
+  revokeCurrentReportPdfUrl();
+  currentReportPdfUrl = objectUrl;
 
   if (reportPdfFrame) {
-    reportPdfFrame.srcdoc = reportDocument;
     reportPdfFrame.src = objectUrl;
   }
   if (reportOpenButton) {
     reportOpenButton.hidden = false;
-    reportOpenButton.textContent = "Open / print";
   }
   if (reportNote) {
-    setTextContent(reportNote, "The styled evidence dossier is ready for review.");
+    setTextContent(reportNote, "The evidence dossier is ready for review.");
   }
   if (reportMeta) {
     setTextContent(
@@ -1822,6 +1071,31 @@ function presentStyledReport(payload) {
       `Investigation ${payload?.investigation_id || "Unavailable"} | Updated ${formatReportDate(
         payload?.updated_at
       )} | Brand website ${getBrandWebsite(payload)}`
+    );
+  }
+  setPhase("report");
+}
+
+function presentSellerCasePdfReport(blob, payload) {
+  const objectUrl = window.URL.createObjectURL(blob);
+  revokeCurrentReportPdfUrl();
+  currentReportPdfUrl = objectUrl;
+
+  if (reportPdfFrame) {
+    reportPdfFrame.src = objectUrl;
+  }
+  if (reportOpenButton) {
+    reportOpenButton.hidden = false;
+  }
+  if (reportNote) {
+    setTextContent(reportNote, "The seller enforcement dossier is ready for review.");
+  }
+  if (reportMeta) {
+    setTextContent(
+      reportMeta,
+      `Seller case ${payload?.case_id || "Unavailable"} | Updated ${formatReportDate(
+        payload?.updated_at
+      )} | Seller ${payload?.seller_name || "Unavailable"}`
     );
   }
   setPhase("report");
@@ -1873,6 +1147,7 @@ function combineStates(states) {
 
 function deriveTimelineStates(stepStates) {
   const candidateState = stepStates.candidate_discovery || "pending";
+  const triageState = stepStates.candidate_triage || "pending";
   const rankingStarted = hasStarted(stepStates.ranking) || hasStarted(stepStates.research_summary);
 
   return {
@@ -1880,12 +1155,34 @@ function deriveTimelineStates(stepStates) {
     search: candidateState,
     candidates: rankingStarted || hasStarted(stepStates.product_comparison)
       ? "completed"
-      : candidateState,
+      : combineStates([candidateState, triageState]),
     analysis: rankingStarted
       ? "completed"
-      : combineStates([stepStates.product_comparison, stepStates.evidence]),
+      : combineStates([
+          stepStates.product_comparison,
+          stepStates.evidence,
+          stepStates.reasoning_enrichment,
+        ]),
     ranking: stepStates.ranking || "pending",
   };
+}
+
+function updateCaseGenerateReportButton(payload) {
+  if (!caseGenerateReportButton) {
+    return;
+  }
+
+  const canGenerate =
+    Boolean(payload?.selected_listing) ||
+    (payload?.suspect_listings || []).length > 0 ||
+    (payload?.evidence || []).length > 0 ||
+    Boolean(payload?.action_request_draft) ||
+    (payload?.raw_agent_outputs || []).length > 0;
+
+  caseGenerateReportButton.disabled = !canGenerate || caseReportGenerationInFlight;
+  caseGenerateReportButton.textContent = caseReportGenerationInFlight
+    ? "Generating report..."
+    : defaultCaseGenerateReportButtonLabel;
 }
 
 function getFocusedTimelineStage(timelineStates) {
@@ -1943,28 +1240,7 @@ function setFocusedTimelineStage(stageKey, options = {}) {
 }
 
 function getSourcePreviewUrl(report) {
-  const sourceTask = getSourceTask(report);
-  const streamingUrl = sourceTask?.output_payload?.runtime?.tinyfish_streaming_url;
-  if (streamingUrl) {
-    return streamingUrl;
-  }
-  if (sourceTask && ["queued", "running", "delayed"].includes(String(sourceTask.status || "").toLowerCase())) {
-    return "";
-  }
-  return (
-    report?.source_url ||
-    lastSubmittedSourceUrl ||
-    parseLines(sourceUrlsInput.value)[0] ||
-    ""
-  );
-}
-
-function getSourceUrl(report) {
   return report?.source_url || lastSubmittedSourceUrl || parseLines(sourceUrlsInput.value)[0] || "";
-}
-
-function getSourceTask(report) {
-  return (report?.raw_agent_outputs || []).find((task) => task.agent_name === "source_extraction") || null;
 }
 
 function getCandidateTasks(report) {
@@ -1981,6 +1257,10 @@ function getEvidenceTasks(report) {
 
 function getRankingTask(report) {
   return (report?.raw_agent_outputs || []).find((task) => task.agent_name === "ranking") || null;
+}
+
+function hasCompletedRanking(report) {
+  return getRankingTask(report)?.status === "completed";
 }
 
 function collectDiscoveredCandidates(report) {
@@ -2023,8 +1303,11 @@ function collectCompletedComparisons(report) {
 }
 
 function getRankingSnapshots(report) {
-  if (report?.top_matches?.length) {
+  if (report?.top_matches?.length && hasCompletedRanking(report)) {
     return sortMatchesByCounterfeitRisk(report.top_matches);
+  }
+  if (!getRankingTask(report)) {
+    return [];
   }
   return sortMatchesByCounterfeitRisk(collectCompletedComparisons(report));
 }
@@ -2041,6 +1324,14 @@ function setPhase(phase) {
   body.dataset.phase = phase;
 }
 
+function getInvestigationPollIntervalMs() {
+  return 1200;
+}
+
+function getCasePollIntervalMs() {
+  return 1400;
+}
+
 function setHistoryMenuOpen(isOpen) {
   if (!historyButton || !historyDropdown) {
     return;
@@ -2048,6 +1339,15 @@ function setHistoryMenuOpen(isOpen) {
 
   historyButton.setAttribute("aria-expanded", String(isOpen));
   historyDropdown.hidden = !isOpen;
+}
+
+function setCaseHistoryMenuOpen(isOpen) {
+  if (!caseHistoryButton || !caseHistoryDropdown) {
+    return;
+  }
+
+  caseHistoryButton.setAttribute("aria-expanded", String(isOpen));
+  caseHistoryDropdown.hidden = !isOpen;
 }
 
 function setComposerInvalid(isInvalid) {
@@ -2065,95 +1365,19 @@ function setStatus(status) {
   statusPill.textContent = statusLabels[normalizedStatus] || status;
 }
 
+function setCaseStatus(status) {
+  if (!caseStatusPill) {
+    return;
+  }
+  const normalizedStatus = String(status || "idle").toLowerCase();
+  caseStatusPill.dataset.status = normalizedStatus;
+  caseStatusPill.textContent = statusLabels[normalizedStatus] || status;
+}
+
 function setSubmitting(isSubmitting) {
   runButton.disabled = isSubmitting;
   runButton.setAttribute("aria-busy", String(isSubmitting));
   runButton.textContent = isSubmitting ? "Investigating..." : defaultRunButtonLabel;
-}
-
-function startNewInvestigation() {
-  if (pollTimer) {
-    window.clearTimeout(pollTimer);
-    pollTimer = null;
-  }
-
-  clearPersistedInvestigationId();
-  latestInvestigationPayload = null;
-  activeTimelineStage = "source";
-  resetProgressTracking();
-  setStatus("idle");
-  updateProgressUI({
-    overview: "No investigation running yet.",
-    detail: "Start a new investigation from the prompt.",
-    percent: 0,
-    stepStates: Object.fromEntries(progressStepDefinitions.map((step) => [step.key, "pending"])),
-  });
-  renderTimeline(null);
-  renderEmptyState("Add official product page URLs to compare them against live marketplace listings.");
-  setSubmitting(false);
-  setComposerInvalid(false);
-  resetReportScene();
-  setHistoryMenuOpen(false);
-  sourceUrlsInput.value = "";
-  syncPromptHeight();
-  setPhase("prompt");
-  sourceUrlsInput.focus();
-}
-
-function returnToPromptAfterFailure(message) {
-  clearPersistedInvestigationId();
-  latestInvestigationPayload = null;
-  resetReportScene();
-  setSubmitting(false);
-  setStatus("idle");
-  setPhase("prompt");
-  renderEmptyState(
-    message || "The investigation failed. Review the saved runs menu to inspect the failed attempt."
-  );
-  sourceUrlsInput.focus();
-}
-
-function investigationHasFailure(payload) {
-  if (!payload) {
-    return false;
-  }
-
-  if (String(payload.status || "").toLowerCase() === "failed" || payload.error) {
-    return true;
-  }
-
-  return (payload.reports || []).some((report) => {
-    if (report.error) {
-      return true;
-    }
-
-    return (report.raw_agent_outputs || []).some((task) => String(task.status || "").toLowerCase() === "failed");
-  });
-}
-
-function getInvestigationFailureMessage(payload) {
-  if (!payload) {
-    return "The investigation failed. Review the saved runs menu to inspect the failed attempt.";
-  }
-
-  if (payload.error) {
-    return payload.error;
-  }
-
-  for (const report of payload.reports || []) {
-    if (report.error) {
-      return report.error;
-    }
-
-    const failedTask = (report.raw_agent_outputs || []).find(
-      (task) => String(task.status || "").toLowerCase() === "failed"
-    );
-    if (failedTask?.error) {
-      return failedTask.error;
-    }
-  }
-
-  return "The investigation failed. Review the saved runs menu to inspect the failed attempt.";
 }
 
 function getPersistedInvestigationId() {
@@ -2182,6 +1406,38 @@ function clearPersistedInvestigationId() {
   renderPastRuns(pastRunsCache);
 }
 
+function getPersistedCaseId() {
+  try {
+    return window.localStorage.getItem(persistedCaseStorageKey);
+  } catch {
+    return null;
+  }
+}
+
+function persistCaseId(caseId) {
+  try {
+    window.localStorage.setItem(persistedCaseStorageKey, caseId);
+  } catch {
+    // Ignore local storage failures and keep the live in-memory flow working.
+  }
+}
+
+function clearPersistedCaseId() {
+  try {
+    window.localStorage.removeItem(persistedCaseStorageKey);
+  } catch {
+    // Ignore local storage failures and keep the live in-memory flow working.
+  }
+  currentCaseId = null;
+  renderPastCases(pastCasesCache);
+}
+
+function selectCase(caseId) {
+  currentCaseId = caseId;
+  persistCaseId(caseId);
+  renderPastCases(pastCasesCache);
+}
+
 function selectInvestigation(investigationId) {
   currentInvestigationId = investigationId;
   persistInvestigationId(investigationId);
@@ -2201,6 +1457,36 @@ function loadInvestigation(investigationId) {
   fetchInvestigation(investigationId);
 }
 
+function startNewInvestigation() {
+  if (pollTimer) {
+    window.clearTimeout(pollTimer);
+    pollTimer = null;
+  }
+  if (casePollTimer) {
+    window.clearTimeout(casePollTimer);
+    casePollTimer = null;
+  }
+  clearPersistedInvestigationId();
+  clearPersistedCaseId();
+  latestInvestigationPayload = null;
+  latestCasePayload = null;
+  resetReportScene();
+  resetCaseWorkspace();
+  setComposerInvalid(false);
+  setStatus("idle");
+  resetProgressTracking();
+  renderTimeline(null);
+  renderEmptyState("Add official product page URLs to compare them against live marketplace listings.");
+  updateGenerateReportButton(null);
+  setSubmitting(false);
+  setHistoryMenuOpen(false);
+  setCaseHistoryMenuOpen(false);
+  sourceUrlsInput.value = "";
+  syncPromptHeight();
+  setPhase("prompt");
+  sourceUrlsInput.focus();
+}
+
 function sortMatchesByCounterfeitRisk(matches) {
   return [...(matches || [])].sort((left, right) => {
     const riskDelta = (right.counterfeit_risk_score || 0) - (left.counterfeit_risk_score || 0);
@@ -2209,6 +1495,31 @@ function sortMatchesByCounterfeitRisk(matches) {
     }
     return (right.match_score || 0) - (left.match_score || 0);
   });
+}
+
+function canBuildSellerCase() {
+  return Boolean(currentInvestigationId) && String(latestInvestigationPayload?.status || "").toLowerCase() === "completed";
+}
+
+function configureBuildCaseButton(button, report, match) {
+  if (!button) {
+    return;
+  }
+
+  button.dataset.sourceUrl = report?.source_url || "";
+  button.dataset.productUrl = match?.product_url || "";
+  button.dataset.marketplace = match?.marketplace || "";
+  button.dataset.sellerName = match?.candidate_product?.seller_name || "";
+
+  const isEnabled = canBuildSellerCase() && Boolean(button.dataset.sourceUrl) && Boolean(button.dataset.productUrl);
+  button.disabled = !isEnabled;
+  if (isEnabled) {
+    button.removeAttribute("title");
+  } else {
+    button.title = currentInvestigationId
+      ? "Complete the investigation before building a seller case."
+      : "Start and finish an investigation before building a seller case.";
+  }
 }
 
 function sortPastRuns(runs) {
@@ -2235,6 +1546,32 @@ function formatRunTimestamp(value) {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+function describeSavedUrl(urlValue) {
+  if (!urlValue) {
+    return {
+      title: "",
+      detail: "",
+      full: "",
+    };
+  }
+
+  try {
+    const url = new URL(urlValue);
+    const pathname = decodeURIComponent(url.pathname || "/").replace(/\/$/, "") || "/";
+    return {
+      title: url.hostname.replace(/^www\./, ""),
+      detail: pathname === "/" ? "Homepage" : pathname,
+      full: url.toString(),
+    };
+  } catch {
+    return {
+      title: String(urlValue),
+      detail: "",
+      full: String(urlValue),
+    };
+  }
 }
 
 function formatRunSource(run) {
@@ -2383,6 +1720,150 @@ function upsertPastRunFromInvestigation(payload) {
   upsertPastRun(nextRun);
 }
 
+function sortPastCases(cases) {
+  return [...cases].sort((left, right) => {
+    const leftTime = new Date(left.updated_at || left.created_at).getTime();
+    const rightTime = new Date(right.updated_at || right.created_at).getTime();
+    return rightTime - leftTime;
+  });
+}
+
+function formatCaseSource(caseItem) {
+  const sellerName = sanitizePlainText(caseItem?.seller_name || "");
+  const marketplace = sanitizePlainText(caseItem?.marketplace || "");
+  const listing = describeSavedUrl(caseItem?.product_url);
+
+  return {
+    title: sellerName || marketplace || listing.title || "Seller case",
+    detail: marketplace || listing.title || "Unknown marketplace",
+    listingDetail: listing.detail,
+    full: listing.full || caseItem?.product_url || caseItem?.source_url || "",
+  };
+}
+
+function formatCaseMeta(caseItem, source) {
+  if (caseItem.error) {
+    return caseItem.error;
+  }
+
+  const sourceReference = describeSavedUrl(caseItem?.source_url);
+  const parts = [];
+  if (source.detail) {
+    parts.push(source.detail);
+  }
+  if (source.listingDetail && source.listingDetail !== "Homepage") {
+    parts.push(source.listingDetail);
+  }
+  if (sourceReference.title) {
+    parts.push(`Source ${sourceReference.title}`);
+  }
+  return parts.join(" · ");
+}
+
+function createPastCaseItem(caseItem) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "past-run-item";
+  button.dataset.caseId = caseItem.case_id;
+
+  const header = document.createElement("div");
+  header.className = "past-run-header";
+
+  const status = document.createElement("span");
+  status.className = "past-run-status";
+  status.dataset.status = String(caseItem.status || "queued").toLowerCase();
+
+  const time = document.createElement("span");
+  time.className = "past-run-time";
+
+  header.append(status, time);
+
+  const title = document.createElement("strong");
+  title.className = "past-run-title";
+
+  const meta = document.createElement("span");
+  meta.className = "past-run-meta";
+
+  button.append(header, title, meta);
+  return button;
+}
+
+function renderPastCases(cases) {
+  if (!pastCasesNode) {
+    return;
+  }
+
+  if (!cases || cases.length === 0) {
+    pastCasesNode.innerHTML = '<p class="empty-state">No saved seller cases yet.</p>';
+    return;
+  }
+
+  const existingItems = new Map(
+    [...pastCasesNode.querySelectorAll(".past-run-item")].map((node) => [node.dataset.caseId, node])
+  );
+
+  cases.forEach((caseItem) => {
+    const caseId = caseItem.case_id;
+    const source = formatCaseSource(caseItem);
+
+    let item = existingItems.get(caseId);
+    if (!item) {
+      item = createPastCaseItem(caseItem);
+    } else {
+      existingItems.delete(caseId);
+    }
+
+    item.classList.toggle("is-active", caseId === currentCaseId);
+    item.setAttribute("aria-pressed", caseId === currentCaseId ? "true" : "false");
+    item.title = source.full || source.title;
+    item.querySelector(".past-run-status").dataset.status = String(caseItem.status || "queued").toLowerCase();
+    setTextContent(
+      item.querySelector(".past-run-status"),
+      statusLabels[String(caseItem.status || "queued").toLowerCase()] || caseItem.status
+    );
+    setTextContent(item.querySelector(".past-run-time"), formatRunTimestamp(caseItem.updated_at || caseItem.created_at));
+    setTextContent(item.querySelector(".past-run-title"), source.title);
+    item.querySelector(".past-run-meta").dataset.tone = caseItem.error ? "error" : "default";
+    setTextContent(item.querySelector(".past-run-meta"), formatCaseMeta(caseItem, source));
+
+    pastCasesNode.appendChild(item);
+  });
+
+  existingItems.forEach((node) => node.remove());
+}
+
+function upsertPastCase(caseItem) {
+  const nextCases = [...pastCasesCache];
+  const existingIndex = nextCases.findIndex((item) => item.case_id === caseItem.case_id);
+  if (existingIndex === -1) {
+    nextCases.push(caseItem);
+  } else {
+    nextCases[existingIndex] = { ...nextCases[existingIndex], ...caseItem };
+  }
+  pastCasesCache = sortPastCases(nextCases);
+  renderPastCases(pastCasesCache);
+}
+
+function upsertPastCaseFromCasePayload(payload) {
+  const existingCase = pastCasesCache.find((item) => item.case_id === payload.case_id) || null;
+  const nextCase = {
+    case_id: payload.case_id,
+    status: payload.status,
+    seller_name: payload.seller_name || existingCase?.seller_name || null,
+    marketplace:
+      payload.marketplace ||
+      payload.selected_listing?.marketplace ||
+      existingCase?.marketplace ||
+      null,
+    source_url: payload.source_url || existingCase?.source_url || "",
+    product_url: payload.product_url || existingCase?.product_url || "",
+    error: payload.error || null,
+    created_at: payload.created_at || existingCase?.created_at,
+    updated_at: payload.updated_at || existingCase?.updated_at || payload.created_at,
+  };
+  upsertPastCase(nextCase);
+}
+
 async function refreshPastRuns() {
   if (!pastRunsNode) {
     return;
@@ -2399,6 +1880,25 @@ async function refreshPastRuns() {
     if (pastRunsCache.length === 0) {
       pastRunsNode.innerHTML =
         '<p class="empty-state">Saved investigations could not be loaded right now.</p>';
+    }
+  }
+}
+
+async function refreshPastCases() {
+  if (!pastCasesNode) {
+    return;
+  }
+
+  try {
+    const response = await fetch("/cases?limit=12");
+    if (!response.ok) {
+      throw new Error("Unable to load seller case history.");
+    }
+    pastCasesCache = sortPastCases(await response.json());
+    renderPastCases(pastCasesCache);
+  } catch {
+    if (pastCasesCache.length === 0) {
+      pastCasesNode.innerHTML = '<p class="empty-state">Saved seller cases could not be loaded right now.</p>';
     }
   }
 }
@@ -2682,60 +2182,20 @@ function renderProgressTracking(payload) {
 }
 
 function renderSourceStage(report) {
-  const sourceTask = getSourceTask(report);
-  const sourceUrl = getSourceUrl(report);
-  const previewUrl = getSourcePreviewUrl(report);
+  const sourceUrl = getSourcePreviewUrl(report);
   const product = report?.extracted_source_product || null;
-  const usingTinyFishPreview = Boolean(
-    previewUrl &&
-      sourceUrl &&
-      previewUrl !== sourceUrl &&
-      previewUrl.includes("tinyfish")
-  );
-  const sourceTaskActive = Boolean(
-    sourceTask && ["queued", "running", "delayed"].includes(String(sourceTask.status || "").toLowerCase())
-  );
 
   setTextContent(timelineSourceUrl, sourceUrl || "No source URL selected yet.");
   timelineSourceLink.hidden = !sourceUrl;
-  if (previewUrl) {
+  if (sourceUrl) {
     timelineSourceLink.href = sourceUrl;
-    if (timelineSourceFrame.dataset.sourceUrl !== previewUrl) {
-      timelineSourceFrame.removeAttribute("srcdoc");
-      timelineSourceFrame.src = previewUrl;
-      timelineSourceFrame.dataset.sourceUrl = previewUrl;
+    if (timelineSourceFrame.dataset.sourceUrl !== sourceUrl) {
+      timelineSourceFrame.src = sourceUrl;
+      timelineSourceFrame.dataset.sourceUrl = sourceUrl;
     }
-  } else {
+  } else if (timelineSourceFrame.dataset.sourceUrl) {
     timelineSourceFrame.removeAttribute("src");
     timelineSourceFrame.dataset.sourceUrl = "";
-    timelineSourceFrame.srcdoc = `
-      <style>
-        body {
-          margin: 0;
-          min-height: 100vh;
-          display: grid;
-          place-items: center;
-          padding: 32px;
-          background: linear-gradient(180deg, #f8f4ed, #f2ebe0);
-          color: #4d4137;
-          font: 16px/1.6 Manrope, sans-serif;
-        }
-        .placeholder {
-          max-width: 34ch;
-          text-align: center;
-        }
-        strong {
-          display: block;
-          margin-bottom: 10px;
-          font-size: 19px;
-          color: #322922;
-        }
-      </style>
-      <div class="placeholder">
-        <strong>TinyFish live preview is not available yet.</strong>
-        <div>The source step is still running. If TinyFish publishes a browser stream, it will appear here automatically.</div>
-      </div>
-    `;
   }
 
   if (!sourceUrl) {
@@ -2774,11 +2234,7 @@ function renderSourceStage(report) {
     timelineNotes.source,
     product
       ? "Official product details extracted from the source page."
-      : usingTinyFishPreview
-        ? "Showing TinyFish live browser preview while extraction is still running."
-        : sourceTaskActive
-          ? "Waiting for TinyFish to publish a live browser preview for this source page."
-        : "Showing the live source page while extraction is still running."
+      : "Showing the live source page while extraction is still running."
   );
   setInnerHtml(timelineSourceMeta, metaHtml);
 }
@@ -2959,7 +2415,7 @@ function renderAnalysisStage(report) {
                     thread.candidate_product?.title || thread.candidate_product?.model || thread.product_url
                   )}</div>
                 </div>
-                <p class="graph-reason">${escapeHtml(thread.reason || "No explanation returned.")}</p>
+                <p class="graph-reason">${escapeHtml(formatReasonText(thread.reason || "No explanation returned."))}</p>
               </div>
             `
           )
@@ -2989,7 +2445,9 @@ function renderAnalysisStage(report) {
                   Number(thread.counterfeit_risk_score || 0).toFixed(1)
                 )}</span>
               </div>
-              <p class="analysis-log-text">${escapeHtml(thread.reason || "No explanation returned.")}</p>
+              <p class="analysis-log-text">${escapeHtml(
+                formatReasonText(thread.reason || "No explanation returned.")
+              )}</p>
             </div>
           `
         )
@@ -3094,27 +2552,30 @@ function renderRankingStage(report) {
     const urlNode = item.querySelector(".ranking-url");
     urlNode.href = productUrl;
     setTextContent(urlNode, productUrl);
-    setInnerHtml(
-      item.querySelector(".ranking-metadata"),
-      `
-        <span class="ranking-metric ranking-metric--risk">
+	    setInnerHtml(
+	      item.querySelector(".ranking-metadata"),
+	      `
+	        <span class="ranking-metric ranking-metric--risk">
           <span class="ranking-metric-label">Risk</span>
           <span class="ranking-metric-value" style="color: ${escapeHtml(
             getRiskColor(match.counterfeit_risk_score)
           )};">
             ${escapeHtml(Number(match.counterfeit_risk_score || 0).toFixed(1))}
           </span>
-        </span>
-        <span class="ranking-metric">
-          <span class="ranking-metric-label">Match</span>
-          <span class="ranking-metric-value">${escapeHtml(Number(match.match_score || 0).toFixed(1))}</span>
-        </span>
+	        </span>
+	        <span class="ranking-metric">
+	          <span class="ranking-metric-label">Match</span>
+	          <span class="ranking-metric-value">${escapeHtml(Number(match.match_score || 0).toFixed(1))}</span>
+	        </span>
+          <button type="button" class="case-action ranking-case-action" data-build-case>
+            Build Seller Case
+          </button>
+	      `
+	    );
+	    setInnerHtml(
+	      item.querySelector(".ranking-details-body"),
       `
-    );
-    setInnerHtml(
-      item.querySelector(".ranking-details-body"),
-      `
-        <p class="ranking-reason">${escapeHtml(match.reason || "No reasoning returned.")}</p>
+        <p class="ranking-reason">${escapeHtml(formatReasonText(match.reason || "No reasoning returned."))}</p>
         <div class="ranking-detail-group">
           <strong>Risk reasoning</strong>
           <ul class="ranking-detail-list">
@@ -3138,17 +2599,17 @@ function renderRankingStage(report) {
                 <strong>Signals</strong>
                 <div class="ranking-detail-chips">
                   ${match.suspicious_signals
-                    .map((signal) => `<span class="ranking-chip">${escapeHtml(signal)}</span>`)
+                    .map((signal) => `<span class="ranking-chip">${escapeHtml(humanizeFieldName(signal))}</span>`)
                     .join("")}
                 </div>
               </div>
             `
             : ""
         }
-        ${
-          match.evidence?.length
-            ? `
-              <div class="ranking-detail-group">
+	        ${
+	          match.evidence?.length
+	            ? `
+	              <div class="ranking-detail-group">
                 <strong>Evidence</strong>
                 <div class="ranking-evidence-list">
                   ${match.evidence
@@ -3162,14 +2623,15 @@ function renderRankingStage(report) {
                       `
                     )
                     .join("")}
-                </div>
-              </div>
-            `
-            : ""
-        }
-      `
-    );
-    const toggleButton = item.querySelector(".ranking-toggle");
+	                </div>
+	              </div>
+	            `
+	            : ""
+	        }
+	      `
+	    );
+      configureBuildCaseButton(item.querySelector("[data-build-case]"), report, match);
+	    const toggleButton = item.querySelector(".ranking-toggle");
     const isOpen = item.classList.contains("is-open");
     toggleButton.setAttribute("aria-expanded", String(isOpen));
     toggleButton.setAttribute("aria-label", isOpen ? "Hide reasoning" : "Show reasoning");
@@ -3239,7 +2701,7 @@ function createReportCard(reportKey) {
   return reportCard;
 }
 
-function renderMatches(matchesNode, topMatches) {
+function renderMatches(matchesNode, topMatches, report) {
   const sortedMatches = sortMatchesByCounterfeitRisk(topMatches);
   const matchesFingerprint = JSON.stringify(sortedMatches);
   if (matchesNode.dataset.renderedMatches === matchesFingerprint) {
@@ -3265,10 +2727,14 @@ function renderMatches(matchesNode, topMatches) {
       <div class="score-chip"><strong>Counterfeit Risk</strong>${match.counterfeit_risk_score}</div>
       <div class="score-chip"><strong>Exact Match</strong>${match.is_exact_match ? "Yes" : "No"}</div>
     `;
-    matchFragment.querySelector(".reason").textContent = match.reason;
+    matchFragment.querySelector(".reason").textContent = formatReasonText(
+      match.reason || "No reasoning returned."
+    );
     matchFragment.querySelector(".signals").innerHTML =
       match.suspicious_signals.length > 0
-        ? match.suspicious_signals.map((signal) => `<span class="signal">${signal}</span>`).join("")
+        ? match.suspicious_signals
+            .map((signal) => `<span class="signal">${escapeHtml(humanizeFieldName(signal))}</span>`)
+            .join("")
         : '<span class="empty-state">No suspicious signals were flagged.</span>';
     matchFragment.querySelector(".evidence-list").innerHTML =
       match.evidence.length > 0
@@ -3285,6 +2751,7 @@ function renderMatches(matchesNode, topMatches) {
             )
             .join("")
         : '<p class="empty-state">No evidence items returned.</p>';
+    configureBuildCaseButton(matchFragment.querySelector("[data-build-case]"), report, match);
     matchesNode.appendChild(matchFragment);
   });
 }
@@ -3364,7 +2831,7 @@ function updateReportCard(reportCard, report) {
     `
   );
 
-  renderMatches(reportCard.querySelector(".matches"), report.top_matches || []);
+  renderMatches(reportCard.querySelector(".matches"), getRankingSnapshots(report), report);
   renderAgentLog(reportCard.querySelector(".agent-log-content"), report.raw_agent_outputs || []);
 }
 
@@ -3373,7 +2840,7 @@ function renderResults(payload) {
     (report) =>
       (report.raw_agent_outputs || []).length > 0 ||
       Boolean(report.extracted_source_product) ||
-      (report.top_matches || []).length > 0 ||
+      getRankingSnapshots(report).length > 0 ||
       Boolean(report.error)
   );
 
@@ -3414,6 +2881,469 @@ function renderResults(payload) {
   });
 }
 
+function resetCaseWorkspace() {
+  latestCasePayload = null;
+  currentCaseId = null;
+  setCaseStatus("idle");
+  if (caseProgressFill) {
+    caseProgressFill.style.width = "0%";
+  }
+  if (caseProgressTrack) {
+    caseProgressTrack.setAttribute("aria-valuenow", "0");
+  }
+  setTextContent(caseTitle, "Seller Enforcement Case");
+  setTextContent(
+    caseSubtitle,
+    "Select a suspicious seller from the investigation results to build a case."
+  );
+  setTextContent(caseProgressText, "No seller case has been started yet.");
+  setInnerHtml(
+    caseProfileSummary,
+    '<p class="case-muted">Seller profile details will appear here after TinyFish inspects the storefront.</p>'
+  );
+  setInnerHtml(
+    caseSeedSummary,
+    '<p class="case-muted">Choose a suspicious listing from the investigation results to seed a seller case.</p>'
+  );
+  setInnerHtml(
+    caseSuspectListings,
+    '<p class="case-muted">Suspicious seller listings will populate here after the storefront inventory is analyzed.</p>'
+  );
+  setInnerHtml(
+    caseEvidenceGrid,
+    '<p class="case-muted">Evidence objects will appear here after the seller-level synthesis step completes.</p>'
+  );
+  setInnerHtml(
+    caseDraft,
+    '<p class="case-muted">The marketplace-facing request draft will appear here after evidence is assembled.</p>'
+  );
+  setInnerHtml(
+    caseActivityLog,
+    '<p class="case-muted">Agent activity will stream here while the seller case is being built.</p>'
+  );
+  if (caseAgentLog) {
+    caseAgentLog.innerHTML = "";
+  }
+  updateCaseGenerateReportButton(null);
+}
+
+function updateCaseProgress(payload) {
+  const tasks = payload?.raw_agent_outputs || [];
+  const completed = tasks.filter((task) => task.status === "completed").length;
+  const failed = tasks.some((task) => task.status === "failed");
+  const percent =
+    payload?.status === "completed"
+      ? 100
+      : payload?.status === "failed"
+        ? Math.max(12, Math.round((completed / Math.max(tasks.length, 1)) * 100))
+        : tasks.length > 0
+          ? Math.max(8, Math.round((completed / tasks.length) * 100))
+          : payload?.status === "queued"
+            ? 4
+            : 12;
+
+  setCaseStatus(payload?.status || "idle");
+  if (caseProgressFill) {
+    caseProgressFill.style.width = `${percent}%`;
+  }
+  if (caseProgressTrack) {
+    caseProgressTrack.setAttribute("aria-valuenow", String(percent));
+  }
+  if (payload?.summary) {
+    setTextContent(caseProgressText, payload.summary);
+  } else if (failed) {
+    setTextContent(caseProgressText, "The seller case failed before the draft could be completed.");
+  } else {
+    setTextContent(caseProgressText, "Preparing the seller case workflow.");
+  }
+}
+
+function renderCaseProfile(payload) {
+  const profile = payload?.seller_profile;
+  if (!profile) {
+    setInnerHtml(
+      caseProfileSummary,
+      '<p class="case-muted">TinyFish has not returned seller profile data yet.</p>'
+    );
+    return;
+  }
+
+  const badges = (profile.badges || [])
+    .map((badge) => `<span class="case-tag">${escapeHtml(badge)}</span>`)
+    .join("");
+  const officialClaims = (profile.official_store_claims || [])
+    .map((claim) => `<span class="case-tag">${escapeHtml(claim)}</span>`)
+    .join("");
+  setInnerHtml(
+    caseProfileSummary,
+    `
+      <div class="case-seed-card">
+        <strong>${escapeHtml(profile.seller_name || payload.seller_name || "Unknown seller")}</strong>
+        <p>${escapeHtml(profile.storefront_summary || profile.profile_text || "No storefront summary returned yet.")}</p>
+        ${profile.seller_url ? `<p><a href="${escapeHtml(profile.seller_url)}" target="_blank" rel="noreferrer">Open storefront</a></p>` : ""}
+      </div>
+      <div class="case-stat-grid">
+        <div class="case-stat"><strong>Marketplace</strong>${escapeHtml(profile.marketplace || payload.marketplace || "Unknown")}</div>
+        <div class="case-stat"><strong>Rating</strong>${profile.rating ?? "n/a"}</div>
+        <div class="case-stat"><strong>Ratings Count</strong>${profile.rating_count ?? "n/a"}</div>
+        <div class="case-stat"><strong>Followers</strong>${profile.follower_count ?? "n/a"}</div>
+        <div class="case-stat"><strong>Location</strong>${escapeHtml(profile.location || "n/a")}</div>
+        <div class="case-stat"><strong>Joined</strong>${escapeHtml(profile.joined_date || "n/a")}</div>
+        <div class="case-stat"><strong>Entry URLs</strong>${(profile.entry_urls || []).length}</div>
+        <div class="case-stat"><strong>Storefront Shards</strong>${(profile.storefront_shard_urls || []).length}</div>
+      </div>
+      ${badges ? `<div class="case-tags">${badges}</div>` : ""}
+      ${officialClaims ? `<div class="case-tags">${officialClaims}</div>` : ""}
+    `
+  );
+}
+
+function renderCaseSeed(payload) {
+  const selectedListing = payload?.selected_listing;
+  if (!selectedListing) {
+    setInnerHtml(
+      caseSeedSummary,
+      `<div class="case-seed-card"><strong>${escapeHtml(payload?.product_url || "Selected listing")}</strong><p>Seed listing details are still being resolved from the investigation results.</p></div>`
+    );
+    return;
+  }
+
+  setInnerHtml(
+    caseSeedSummary,
+    `
+      <div class="case-seed-card">
+        <strong>${escapeHtml(selectedListing.candidate_product?.title || selectedListing.product_url)}</strong>
+        <p><a href="${escapeHtml(selectedListing.product_url)}" target="_blank" rel="noreferrer">${escapeHtml(selectedListing.product_url)}</a></p>
+        <p>${escapeHtml(formatReasonText(selectedListing.reason || "No case seed rationale returned."))}</p>
+      </div>
+      <div class="case-stat-grid">
+        <div class="case-stat"><strong>Marketplace</strong>${escapeHtml(selectedListing.marketplace || "Unknown")}</div>
+        <div class="case-stat"><strong>Seller</strong>${escapeHtml(selectedListing.candidate_product?.seller_name || payload?.seller_name || "Unknown")}</div>
+        <div class="case-stat"><strong>Risk</strong>${selectedListing.counterfeit_risk_score ?? "n/a"}</div>
+        <div class="case-stat"><strong>Match</strong>${selectedListing.match_score ?? "n/a"}</div>
+      </div>
+    `
+  );
+}
+
+function renderCaseListings(payload) {
+  const listings = payload?.suspect_listings || [];
+  const officialMatchesByUrl = Object.fromEntries(
+    (payload?.official_product_matches || []).map((item) => [String(item.product_url), item])
+  );
+  if (listings.length === 0) {
+    setInnerHtml(
+      caseSuspectListings,
+      '<p class="case-muted">No suspect seller listings have been confirmed yet.</p>'
+    );
+    return;
+  }
+
+  setInnerHtml(
+    caseSuspectListings,
+    listings
+      .map(
+        (listing, index) => `
+          <article class="case-listing-card">
+            <div class="case-listing-head">
+              <div>
+                <strong>#${index + 1} ${escapeHtml(listing.candidate_product?.title || listing.product_url)}</strong>
+                <p><a href="${escapeHtml(listing.product_url)}" target="_blank" rel="noreferrer">${escapeHtml(listing.product_url)}</a></p>
+              </div>
+              <span class="case-pill" data-tone="risk">Risk ${Number(listing.counterfeit_risk_score || 0).toFixed(2)}</span>
+            </div>
+            <p>${escapeHtml(formatReasonText(listing.reason || "No listing rationale returned."))}</p>
+            ${
+              officialMatchesByUrl[String(listing.product_url)]?.official_product_url
+                ? `<p><strong>Official product:</strong> <a href="${escapeHtml(
+                    officialMatchesByUrl[String(listing.product_url)].official_product_url
+                  )}" target="_blank" rel="noreferrer">${escapeHtml(
+                    officialMatchesByUrl[String(listing.product_url)].official_product_url
+                  )}</a></p>`
+                : ""
+            }
+            <div class="case-tags">
+              <span class="case-tag">Match ${Number(listing.match_score || 0).toFixed(2)}</span>
+              <span class="case-tag">Triage ${Number(listing.triage_priority_score || 0).toFixed(2)}</span>
+              <span class="case-tag">Official Match ${Number(listing.comparison_basis_confidence || 0).toFixed(2)}</span>
+              ${(listing.suspicious_signals || [])
+                .map((signal) => `<span class="case-tag">${escapeHtml(humanizeFieldName(signal))}</span>`)
+                .join("")}
+            </div>
+          </article>
+        `
+      )
+      .join("")
+  );
+}
+
+function renderCaseEvidence(payload) {
+  const evidence = payload?.evidence || [];
+  if (evidence.length === 0) {
+    setInnerHtml(
+      caseEvidenceGrid,
+      '<p class="case-muted">No evidence objects are available yet.</p>'
+    );
+    return;
+  }
+
+  setInnerHtml(
+    caseEvidenceGrid,
+    evidence
+      .map(
+        (item) => `
+          <article class="case-evidence-card">
+            <div class="case-evidence-head">
+              <div>
+                <strong>${escapeHtml(item.title || item.type)}</strong>
+                <p>${escapeHtml(item.note || "")}</p>
+              </div>
+              <span class="case-pill">${Number(item.confidence || 0).toFixed(2)}</span>
+            </div>
+            ${item.reference_url ? `<p><a href="${escapeHtml(item.reference_url)}" target="_blank" rel="noreferrer">${escapeHtml(item.reference_url)}</a></p>` : ""}
+            <div class="case-tags">
+              ${item.subject ? `<span class="case-tag">${escapeHtml(item.subject)}</span>` : ""}
+              ${(item.supporting_signals || [])
+                .map((signal) => `<span class="case-tag">${escapeHtml(humanizeFieldName(signal))}</span>`)
+                .join("")}
+            </div>
+          </article>
+        `
+      )
+      .join("")
+  );
+}
+
+function renderCaseDraft(payload) {
+  const draft = payload?.action_request_draft;
+  if (!draft) {
+    setInnerHtml(
+      caseDraft,
+      '<p class="case-muted">The action-request draft is still being prepared.</p>'
+    );
+    return;
+  }
+
+  setInnerHtml(
+    caseDraft,
+    `
+      <div class="case-draft-block">
+        <strong>${escapeHtml(draft.case_title || "Seller case draft")}</strong>
+        <p>${escapeHtml(draft.summary || "")}</p>
+      </div>
+      <div class="case-draft-block">
+        <strong>Recommended Action</strong>
+        <p><span class="case-pill" data-tone="action">${escapeHtml(draft.recommended_action || "manual review")}</span></p>
+        <p>${escapeHtml(draft.suspected_violation_type || "")}</p>
+      </div>
+      <div class="case-draft-block">
+        <strong>Reasoning</strong>
+        <p>${escapeHtml(draft.reasoning || "")}</p>
+      </div>
+      <div class="case-draft-block">
+        <strong>Marketplace Request</strong>
+        <p>${escapeHtml(draft.request_text || "")}</p>
+      </div>
+      <div class="case-draft-block">
+        <strong>Evidence References</strong>
+        ${
+          (draft.evidence_references || []).length > 0
+            ? `<div class="case-tags">${draft.evidence_references
+                .map(
+                  (reference) =>
+                    `<a class="case-tag" href="${escapeHtml(reference)}" target="_blank" rel="noreferrer">${escapeHtml(
+                      formatHostname(reference)
+                    )}</a>`
+                )
+                .join("")}</div>`
+            : '<p class="case-muted">No evidence references were returned.</p>'
+        }
+      </div>
+    `
+  );
+}
+
+function renderCaseActivity(payload) {
+  const activity = payload?.activity_log || [];
+  if (activity.length === 0) {
+    setInnerHtml(
+      caseActivityLog,
+      '<p class="case-muted">No activity has been recorded yet.</p>'
+    );
+    return;
+  }
+
+  setInnerHtml(
+    caseActivityLog,
+    activity
+      .slice(-10)
+      .reverse()
+      .map(
+        (item) => `
+          <article class="case-activity-item">
+            <div class="case-activity-head">
+              <strong>${escapeHtml(item.agent_name || "agent")}</strong>
+              <span class="case-pill">${escapeHtml(formatReportDate(item.timestamp))}</span>
+            </div>
+            <p>${escapeHtml(item.message || "")}</p>
+          </article>
+        `
+      )
+      .join("")
+  );
+}
+
+function renderCaseWorkspace(payload) {
+  latestCasePayload = payload;
+  selectCase(payload.case_id);
+  upsertPastCaseFromCasePayload(payload);
+  if (payload.investigation_id) {
+    selectInvestigation(payload.investigation_id);
+  }
+  setTextContent(caseTitle, payload.seller_name || "Seller Enforcement Case");
+  setTextContent(
+    caseSubtitle,
+    `Source product: ${payload.source_product?.product_name || payload.source_url || "Unknown source"}`
+  );
+  updateCaseProgress(payload);
+  renderCaseProfile(payload);
+  renderCaseSeed(payload);
+  renderCaseListings(payload);
+  renderCaseEvidence(payload);
+  renderCaseDraft(payload);
+  renderCaseActivity(payload);
+  if (caseAgentLog) {
+    renderAgentLog(caseAgentLog, payload.raw_agent_outputs || []);
+  }
+  updateCaseGenerateReportButton(payload);
+}
+
+async function fetchCase(caseId) {
+  try {
+    const response = await fetch(`/cases/${caseId}`);
+    if (!response.ok) {
+      if (response.status === 404) {
+        clearPersistedCaseId();
+      }
+      throw new Error("Unable to refresh the seller case.");
+    }
+
+    const payload = await response.json();
+    renderCaseWorkspace(payload);
+    setPhase("case");
+
+    if (["queued", "running", "delayed"].includes(payload.status)) {
+      casePollTimer = window.setTimeout(() => fetchCase(caseId), getCasePollIntervalMs());
+    } else if (casePollTimer) {
+      window.clearTimeout(casePollTimer);
+      casePollTimer = null;
+      refreshPastCases();
+    } else {
+      refreshPastCases();
+    }
+  } catch (error) {
+    if (casePollTimer) {
+      window.clearTimeout(casePollTimer);
+      casePollTimer = null;
+    }
+    setCaseStatus("failed");
+    setTextContent(
+      caseProgressText,
+      error instanceof Error ? error.message : "The seller case could not be refreshed."
+    );
+    updateCaseGenerateReportButton(null);
+  }
+}
+
+function loadCase(caseId) {
+  if (!caseId) {
+    return;
+  }
+  if (casePollTimer) {
+    window.clearTimeout(casePollTimer);
+    casePollTimer = null;
+  }
+  previousPhaseBeforeCase = currentPhase === "case" ? "prompt" : currentPhase;
+  resetCaseWorkspace();
+  selectCase(caseId);
+  setPhase("case");
+  setCaseStatus("queued");
+  setTextContent(caseProgressText, "Loading the saved seller case.");
+  fetchCase(caseId);
+}
+
+async function createSellerCase(sourceUrl, productUrl) {
+  if (!currentInvestigationId) {
+    return;
+  }
+
+  if (casePollTimer) {
+    window.clearTimeout(casePollTimer);
+    casePollTimer = null;
+  }
+
+  previousPhaseBeforeCase = currentPhase === "case" ? "progress" : currentPhase;
+  resetCaseWorkspace();
+  setPhase("case");
+  setCaseStatus("queued");
+  setTextContent(caseProgressText, "Creating the seller case and preparing the storefront research agents.");
+
+  const response = await fetch("/cases", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      investigation_id: currentInvestigationId,
+      source_url: sourceUrl,
+      product_url: productUrl,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error("Unable to create the seller case.");
+  }
+
+  const payload = await response.json();
+  renderCaseWorkspace(payload);
+  await fetchCase(payload.case_id);
+}
+
+async function restorePersistedCase() {
+  const persistedCaseId = getPersistedCaseId();
+  if (!persistedCaseId) {
+    return;
+  }
+
+  try {
+    await fetchCase(persistedCaseId);
+  } catch {
+    clearPersistedCaseId();
+  }
+}
+
+async function handleBuildCaseButtonClick(button) {
+  button.disabled = true;
+  button.textContent = "Building case...";
+  try {
+    await createSellerCase(button.dataset.sourceUrl, button.dataset.productUrl);
+  } catch (error) {
+    setPhase("progress");
+    setTextContent(
+      progressText,
+      error instanceof Error ? error.message : "The seller case could not be created."
+    );
+  } finally {
+    button.textContent = "Build Seller Case";
+    configureBuildCaseButton(
+      button,
+      { source_url: button.dataset.sourceUrl },
+      {
+        product_url: button.dataset.productUrl,
+        marketplace: button.dataset.marketplace,
+        candidate_product: { seller_name: button.dataset.sellerName },
+      }
+    );
+  }
+}
+
 async function fetchInvestigation(investigationId) {
   try {
     const response = await fetch(`/investigation/${investigationId}`);
@@ -3437,14 +3367,13 @@ async function fetchInvestigation(investigationId) {
     updateGenerateReportButton(payload);
 
     if (["queued", "running", "delayed"].includes(payload.status)) {
-      pollTimer = window.setTimeout(() => fetchInvestigation(investigationId), 1200);
+      pollTimer = window.setTimeout(
+        () => fetchInvestigation(investigationId),
+        getInvestigationPollIntervalMs()
+      );
     } else if (pollTimer) {
       window.clearTimeout(pollTimer);
       refreshPastRuns();
-    }
-
-    if (investigationHasFailure(payload)) {
-      returnToPromptAfterFailure(getInvestigationFailureMessage(payload));
     }
   } catch (error) {
     if (pollTimer) {
@@ -3452,8 +3381,60 @@ async function fetchInvestigation(investigationId) {
     }
     latestInvestigationPayload = null;
     resetReportScene();
+    setPhase("progress");
+    setStatus("failed");
+    const stepStates = Object.fromEntries(progressStepDefinitions.map((step) => [step.key, "failed"]));
+    updateProgressUI({
+      overview: "Progress unavailable",
+      detail: error.message,
+      percent: 0,
+      stepStates,
+    });
+    renderTimeline(null);
+    renderEmptyState("The investigation state could not be refreshed. Try again in a moment.");
     updateGenerateReportButton(null);
-    returnToPromptAfterFailure(error.message || "The investigation state could not be refreshed.");
+  }
+}
+
+async function restorePersistedInvestigation() {
+  const persistedInvestigationId = getPersistedInvestigationId();
+  if (!persistedInvestigationId) {
+    setPhase("prompt");
+    return;
+  }
+
+  try {
+    const response = await fetch(`/investigation/${persistedInvestigationId}`);
+    if (!response.ok) {
+      throw new Error("The saved investigation was not found.");
+    }
+
+    const payload = await response.json();
+    if (["queued", "running", "delayed"].includes(payload.status)) {
+      currentInvestigationId = persistedInvestigationId;
+      setPhase("progress");
+      setStatus("queued");
+      const queuedStepStates = Object.fromEntries(
+        progressStepDefinitions.map((step, index) => [step.key, index === 0 ? "queued" : "pending"])
+      );
+      updateProgressUI({
+        overview: "Restoring previous investigation",
+        detail: "Reloading the latest saved investigation state.",
+        percent: 4,
+        stepStates: queuedStepStates,
+      });
+      renderTimeline(null);
+      renderEmptyState("Restoring the latest saved investigation state.");
+      fetchInvestigation(persistedInvestigationId);
+      return;
+    }
+
+    clearPersistedInvestigationId();
+    upsertPastRunFromInvestigation(payload);
+    setPhase("prompt");
+  } catch {
+    clearPersistedInvestigationId();
+    setPhase("prompt");
   }
 }
 
@@ -3481,10 +3462,17 @@ form.addEventListener("submit", async (event) => {
   lastSubmittedSourceUrl = source_urls[0] || "";
   latestInvestigationPayload = null;
   resetReportScene();
+  resetCaseWorkspace();
+  setHistoryMenuOpen(false);
+  setCaseHistoryMenuOpen(false);
   updateGenerateReportButton(null);
 
   if (pollTimer) {
     window.clearTimeout(pollTimer);
+  }
+  if (casePollTimer) {
+    window.clearTimeout(casePollTimer);
+    casePollTimer = null;
   }
 
   setPhase("progress");
@@ -3576,22 +3564,66 @@ if (generateReportButton) {
       return;
     }
 
+    previousPhaseBeforeReport = currentPhase;
     reportGenerationInFlight = true;
     updateGenerateReportButton(latestInvestigationPayload);
-    setTextContent(progressText, "Generating the styled evidence dossier from the latest investigation data.");
+    setTextContent(progressText, "Generating the evidence dossier PDF from the latest investigation data.");
 
     try {
-      presentStyledReport(latestInvestigationPayload);
-      setTextContent(progressText, "Styled evidence dossier prepared and embedded below.");
+      const pdfBlob = buildInvestigationPdf(latestInvestigationPayload);
+      presentPdfReport(pdfBlob, latestInvestigationPayload);
+      setTextContent(progressText, "Evidence dossier prepared and embedded below.");
     } catch (error) {
       setTextContent(
         progressText,
-        error instanceof Error ? error.message : "The report could not be generated."
+        error instanceof Error ? error.message : "The report PDF could not be generated."
       );
     } finally {
       reportGenerationInFlight = false;
       updateGenerateReportButton(latestInvestigationPayload);
     }
+  });
+}
+
+if (caseGenerateReportButton) {
+  caseGenerateReportButton.addEventListener("click", async () => {
+    if (!latestCasePayload) {
+      return;
+    }
+
+    previousPhaseBeforeReport = currentPhase;
+    caseReportGenerationInFlight = true;
+    updateCaseGenerateReportButton(latestCasePayload);
+    setTextContent(caseProgressText, "Generating the seller enforcement dossier from the latest case data.");
+
+    try {
+      const pdfBlob = buildSellerCasePdf(latestCasePayload);
+      presentSellerCasePdfReport(pdfBlob, latestCasePayload);
+      setTextContent(caseProgressText, "Seller enforcement dossier prepared and embedded below.");
+    } catch (error) {
+      setTextContent(
+        caseProgressText,
+        error instanceof Error ? error.message : "The seller case PDF could not be generated."
+      );
+    } finally {
+      caseReportGenerationInFlight = false;
+      updateCaseGenerateReportButton(latestCasePayload);
+    }
+  });
+}
+
+if (reportBackButton) {
+  reportBackButton.addEventListener("click", () => {
+    setPhase(previousPhaseBeforeReport || "progress");
+  });
+}
+
+if (reportOpenButton) {
+  reportOpenButton.addEventListener("click", () => {
+    if (!currentReportPdfUrl) {
+      return;
+    }
+    window.open(currentReportPdfUrl, "_blank", "noopener");
   });
 }
 
@@ -3604,28 +3636,22 @@ if (newInvestigationButton) {
 if (historyButton) {
   historyButton.addEventListener("click", () => {
     const isOpen = historyButton.getAttribute("aria-expanded") === "true";
+    setCaseHistoryMenuOpen(false);
     setHistoryMenuOpen(!isOpen);
   });
 }
 
-if (reportBackButton) {
-  reportBackButton.addEventListener("click", () => {
-    setPhase("progress");
+if (caseHistoryButton) {
+  caseHistoryButton.addEventListener("click", () => {
+    const isOpen = caseHistoryButton.getAttribute("aria-expanded") === "true";
+    setHistoryMenuOpen(false);
+    setCaseHistoryMenuOpen(!isOpen);
   });
 }
 
-if (reportNewButton) {
-  reportNewButton.addEventListener("click", () => {
-    startNewInvestigation();
-  });
-}
-
-if (reportOpenButton) {
-  reportOpenButton.addEventListener("click", () => {
-    if (!currentReportDocumentUrl) {
-      return;
-    }
-    window.open(currentReportDocumentUrl, "_blank", "noopener");
+if (caseBackButton) {
+  caseBackButton.addEventListener("click", () => {
+    setPhase(previousPhaseBeforeCase || "progress");
   });
 }
 
@@ -3640,59 +3666,89 @@ if (pastRunsNode) {
   });
 }
 
-document.addEventListener("click", (event) => {
-  if (!historyButton || !historyDropdown) {
-    return;
-  }
+if (pastCasesNode) {
+  pastCasesNode.addEventListener("click", (event) => {
+    const button = event.target.closest(".past-run-item");
+    if (!button) {
+      return;
+    }
+    setCaseHistoryMenuOpen(false);
+    loadCase(button.dataset.caseId);
+  });
+}
 
+document.addEventListener("click", (event) => {
   const target = event.target;
   if (!(target instanceof Node)) {
     return;
   }
 
-  if (historyButton.contains(target) || historyDropdown.contains(target)) {
-    return;
+  if (
+    historyButton &&
+    historyDropdown &&
+    !historyButton.contains(target) &&
+    !historyDropdown.contains(target)
+  ) {
+    setHistoryMenuOpen(false);
   }
 
-  setHistoryMenuOpen(false);
+  if (
+    caseHistoryButton &&
+    caseHistoryDropdown &&
+    !caseHistoryButton.contains(target) &&
+    !caseHistoryDropdown.contains(target)
+  ) {
+    setCaseHistoryMenuOpen(false);
+  }
 });
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     setHistoryMenuOpen(false);
+    setCaseHistoryMenuOpen(false);
   }
 });
 
+if (resultsNode) {
+  resultsNode.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-build-case]");
+    if (!button) {
+      return;
+    }
+
+    await handleBuildCaseButtonClick(button);
+  });
+}
+
+if (timelineRankingList) {
+  timelineRankingList.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-build-case]");
+    if (!button) {
+      return;
+    }
+
+    await handleBuildCaseButtonClick(button);
+  });
+}
+
 setStatus("idle");
+setCaseStatus("idle");
 resetProgressTracking();
 renderEmptyState("Add official product page URLs to compare them against live marketplace listings.");
 syncPromptHeight();
 updateGenerateReportButton(null);
 resetReportScene();
+resetCaseWorkspace();
 
 currentInvestigationId = getPersistedInvestigationId();
 refreshPastRuns();
-if (currentInvestigationId) {
-  setPhase("progress");
-  setStatus("queued");
-  const queuedStepStates = Object.fromEntries(
-    progressStepDefinitions.map((step, index) => [step.key, index === 0 ? "queued" : "pending"])
-  );
-  updateProgressUI({
-    overview: "Restoring previous investigation",
-    detail: "Reloading the latest saved investigation state.",
-    percent: 4,
-    stepStates: queuedStepStates,
-  });
-  renderTimeline(null);
-  renderEmptyState("Restoring the latest saved investigation state.");
-  fetchInvestigation(currentInvestigationId);
-} else {
-  setPhase("prompt");
-}
+refreshPastCases();
+restorePersistedInvestigation().finally(() => {
+  restorePersistedCase();
+});
 
 window.addEventListener("beforeunload", () => {
-  revokeCurrentReportDocumentUrl();
+  revokeCurrentReportPdfUrl();
 });
 
 fetch("/config")

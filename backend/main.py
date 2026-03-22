@@ -17,11 +17,21 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from models.schemas import InvestigationCreateRequest, InvestigationListItem, InvestigationResponse
+from models.case_schemas import (
+    SellerCaseCreateRequest,
+    SellerCaseListItem,
+    SellerCaseResponse,
+)
+from models.schemas import (
+    InvestigationCreateRequest,
+    InvestigationListItem,
+    InvestigationResponse,
+)
 from services.investigation_orchestrator import InvestigationOrchestrator
-from services.logging_config import LOG_PATH, configure_logging
-from services.settings import settings
 from services.investigation_store import InvestigationStore
+from services.logging_config import LOG_PATH, configure_logging
+from services.seller_case_orchestrator import SellerCaseOrchestrator
+from services.settings import settings
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -42,6 +52,7 @@ app.add_middleware(
 
 store = InvestigationStore()
 orchestrator = InvestigationOrchestrator(store=store)
+seller_case_orchestrator = SellerCaseOrchestrator(store=store)
 
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
@@ -51,9 +62,15 @@ async def recover_unfinished_investigations() -> None:
         asyncio.create_task(orchestrator.run_investigation(investigation.investigation_id))
 
 
+async def recover_unfinished_cases() -> None:
+    for seller_case in await store.list_active_cases():
+        asyncio.create_task(seller_case_orchestrator.run_case(seller_case.case_id))
+
+
 @app.on_event("startup")
 async def startup() -> None:
     await recover_unfinished_investigations()
+    await recover_unfinished_cases()
 
 
 @app.get("/", include_in_schema=False)
@@ -71,6 +88,7 @@ async def health() -> dict[str, str]:
     return {
         "status": "ok",
         "tinyfish_enabled": "true" if settings.tinyfish_enabled else "false",
+        "openai_enabled": "true" if settings.openai_enabled else "false",
     }
 
 
@@ -80,6 +98,10 @@ async def config() -> dict[str, object]:
         "brand_landing_page_url": settings.brand_landing_page_url,
         "ecommerce_store_urls": settings.ecommerce_store_urls,
         "tinyfish_browser_profile": settings.tinyfish_browser_profile,
+        "openai_enabled": settings.openai_enabled,
+        "openai_triage_model": settings.openai_triage_model,
+        "openai_reasoning_model": settings.openai_reasoning_model,
+        "openai_shortlist_limit": settings.openai_shortlist_limit,
         "log_path": str(LOG_PATH),
     }
 
@@ -103,6 +125,30 @@ async def get_investigation(investigation_id: str) -> InvestigationResponse:
     if investigation is None:
         raise HTTPException(status_code=404, detail="Investigation not found")
     return investigation
+
+
+@app.get("/cases", response_model=list[SellerCaseListItem])
+async def list_cases(limit: int = Query(default=12, ge=1, le=100)) -> list[SellerCaseListItem]:
+    return await store.list_recent_cases(limit=limit)
+
+
+@app.post("/cases", response_model=SellerCaseResponse)
+async def create_case(payload: SellerCaseCreateRequest) -> SellerCaseResponse:
+    investigation = await store.get(payload.investigation_id)
+    if investigation is None:
+        raise HTTPException(status_code=404, detail="Investigation not found")
+    seller_case = await store.create_case(payload)
+    logger.info("Seller case queued: %s", seller_case.case_id)
+    asyncio.create_task(seller_case_orchestrator.run_case(seller_case.case_id))
+    return seller_case
+
+
+@app.get("/cases/{case_id}", response_model=SellerCaseResponse)
+async def get_case(case_id: str) -> SellerCaseResponse:
+    seller_case = await store.get_case(case_id)
+    if seller_case is None:
+        raise HTTPException(status_code=404, detail="Seller case not found")
+    return seller_case
 
 
 def run() -> None:

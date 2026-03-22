@@ -57,6 +57,12 @@ class Settings:
     tinyfish_run_soft_timeout_seconds: float = _float_env("TINYFISH_RUN_SOFT_TIMEOUT_SECONDS", 300.0)
     tinyfish_run_hard_timeout_seconds: float = _float_env("TINYFISH_RUN_HARD_TIMEOUT_SECONDS", 1800.0)
     tinyfish_run_stall_timeout_seconds: float = _float_env("TINYFISH_RUN_STALL_TIMEOUT_SECONDS", 120.0)
+    openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
+    openai_base_url: str = os.getenv("OPENAI_BASE_URL", "https://api.openai.com")
+    openai_triage_model: str = os.getenv("OPENAI_TRIAGE_MODEL", "gpt-5-mini")
+    openai_reasoning_model: str = os.getenv("OPENAI_REASONING_MODEL", "gpt-5-mini")
+    openai_http_timeout_seconds: float = _float_env("OPENAI_HTTP_TIMEOUT_SECONDS", 30.0)
+    openai_shortlist_limit: int = int(os.getenv("OPENAI_SHORTLIST_LIMIT", "6"))
     brand_landing_page_url: str = os.getenv("BRAND_LANDING_PAGE_URL", "")
     ecommerce_store_urls: list[str] = None  # type: ignore[assignment]
 
@@ -67,6 +73,9 @@ class Settings:
     def tinyfish_enabled(self) -> bool:
         return bool(self.tinyfish_api_key)
 
+    @property
+    def openai_enabled(self) -> bool:
+        return bool(self.openai_api_key)
+
 
 settings = Settings()
-

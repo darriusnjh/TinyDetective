@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import threading
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -26,7 +25,6 @@ class TinyFishRun:
     result: Any = None
     error: Any = None
     raw: dict[str, Any] | None = None
-    streaming_url: str | None = None
     elapsed_seconds: float | None = None
     delayed: bool = False
     last_heartbeat_at: datetime | None = None
@@ -66,55 +64,20 @@ class TinyFishClient:
                 await maybe_awaitable
         return await self.wait_for_run(run_id, on_update=on_update)
 
-    async def run_json_sse(
-        self,
-        url: str,
-        goal: str,
-        on_update: TinyFishRunUpdateCallback | None = None,
-    ) -> TinyFishRun:
-        if not self.api_key:
-            raise TinyFishError("TINYFISH_API_KEY is not configured.")
-
-        queue: asyncio.Queue[TinyFishRun | Exception | object] = asyncio.Queue()
-        loop = asyncio.get_running_loop()
-        done = object()
-
-        def push(value: TinyFishRun | Exception | object) -> None:
-            loop.call_soon_threadsafe(queue.put_nowait, value)
-
-        def worker() -> None:
-            try:
-                self._stream_run_sse(url, goal, push)
-            except Exception as exc:  # pragma: no cover - network thread
-                push(exc)
-            finally:
-                push(done)
-
-        thread = threading.Thread(target=worker, daemon=True)
-        thread.start()
-
-        final_run: TinyFishRun | None = None
-        while True:
-            item = await queue.get()
-            if item is done:
-                break
-            if isinstance(item, Exception):
-                raise item
-            if on_update is not None:
-                maybe_awaitable = on_update(item)
-                if asyncio.iscoroutine(maybe_awaitable):
-                    await maybe_awaitable
-            if item.status.upper() == "COMPLETED":
-                final_run = item
-
-        if final_run is None:
-            raise TinyFishError("TinyFish SSE stream ended before a completed result was received.")
-        return final_run
-
     async def start_run(self, url: str, goal: str) -> str:
         if not self.api_key:
             raise TinyFishError("TINYFISH_API_KEY is not configured.")
-        payload = self._automation_payload(url, goal)
+        payload: dict[str, Any] = {
+            "url": url,
+            "goal": goal,
+            "browser_profile": self.browser_profile,
+            "api_integration": "tinydetective",
+        }
+        if settings.tinyfish_proxy_enabled:
+            payload["proxy_config"] = {
+                "enabled": True,
+                "country_code": settings.tinyfish_proxy_country_code,
+            }
         response = await asyncio.to_thread(
             self._request_json,
             "POST",
@@ -210,117 +173,7 @@ class TinyFishClient:
             result=self._extract_result_payload(run_data),
             error=run_data.get("error"),
             raw=run_data,
-            streaming_url=run_data.get("streaming_url"),
         )
-
-    def _stream_run_sse(
-        self,
-        url: str,
-        goal: str,
-        push: Callable[[TinyFishRun], None],
-    ) -> None:
-        req = request.Request(
-            f"{self.base_url}/v1/automation/run-sse",
-            data=json.dumps(self._automation_payload(url, goal)).encode("utf-8"),
-            method="POST",
-            headers={
-                "Content-Type": "application/json",
-                "Accept": "text/event-stream",
-                "Cache-Control": "no-cache",
-                "X-API-Key": self.api_key,
-            },
-        )
-        started_mono = time.monotonic()
-        heartbeat_at = datetime.now(timezone.utc)
-        last_progress_at = heartbeat_at
-        current_run_id = ""
-        current_streaming_url: str | None = None
-
-        try:
-            with request.urlopen(req, timeout=settings.tinyfish_run_hard_timeout_seconds) as response:
-                event_lines: list[str] = []
-                while True:
-                    raw_line = response.readline()
-                    if not raw_line:
-                        break
-                    line = raw_line.decode("utf-8", errors="replace").strip()
-                    if not line:
-                        if not event_lines:
-                            continue
-                        payload = "\n".join(
-                            line.removeprefix("data:").strip()
-                            for line in event_lines
-                            if line.startswith("data:")
-                        )
-                        event_lines = []
-                        if not payload:
-                            continue
-                        event = json.loads(payload)
-                        current_run_id = str(event.get("run_id") or current_run_id)
-                        event_type = str(event.get("type") or event.get("status") or "UNKNOWN").upper()
-                        if event_type in {"PROGRESS", "STREAMING_URL", "COMPLETE", "COMPLETED", "STARTED"}:
-                            heartbeat_at = datetime.now(timezone.utc)
-                        if event_type in {"PROGRESS", "STREAMING_URL", "COMPLETE", "COMPLETED"}:
-                            last_progress_at = heartbeat_at
-                        if event.get("streaming_url"):
-                            current_streaming_url = str(event["streaming_url"])
-
-                        status = str(event.get("status") or "RUNNING")
-                        if event_type == "STARTED":
-                            status = "RUNNING"
-                        elif event_type == "STREAMING_URL":
-                            status = "RUNNING"
-                        elif event_type in {"COMPLETE", "COMPLETED"}:
-                            status = "COMPLETED"
-                        elif event_type in {"FAILED", "CANCELLED", "ERROR"}:
-                            status = event_type
-
-                        run = TinyFishRun(
-                            run_id=current_run_id,
-                            status=status,
-                            result=event.get("result") or event.get("resultJson"),
-                            error=event.get("error"),
-                            raw=event,
-                            streaming_url=current_streaming_url,
-                            elapsed_seconds=time.monotonic() - started_mono,
-                            delayed=(time.monotonic() - started_mono) >= settings.tinyfish_run_soft_timeout_seconds,
-                            last_heartbeat_at=heartbeat_at,
-                            last_progress_at=last_progress_at,
-                        )
-                        push(run)
-
-                        if status.upper() == "COMPLETED":
-                            return
-                        if status.upper() in {"FAILED", "CANCELLED", "ERROR"}:
-                            raise TinyFishError(
-                                f"TinyFish SSE run {current_run_id or '<unknown>'} ended with status {status}: {run.error}"
-                            )
-                        continue
-
-                    event_lines.append(line)
-        except error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
-            raise TinyFishError(f"TinyFish HTTP {exc.code}: {detail}") from exc
-        except error.URLError as exc:
-            raise TinyFishError(f"Failed to reach TinyFish: {exc.reason}") from exc
-        except TimeoutError as exc:
-            raise TinyFishError("Timed out while waiting for TinyFish SSE stream.") from exc
-
-        raise TinyFishError("TinyFish SSE stream closed unexpectedly.")
-
-    def _automation_payload(self, url: str, goal: str) -> dict[str, Any]:
-        payload: dict[str, Any] = {
-            "url": url,
-            "goal": goal,
-            "browser_profile": self.browser_profile,
-            "api_integration": "tinydetective",
-        }
-        if settings.tinyfish_proxy_enabled:
-            payload["proxy_config"] = {
-                "enabled": True,
-                "country_code": settings.tinyfish_proxy_country_code,
-            }
-        return payload
 
     def _request_json(self, method: str, url: str, payload: dict[str, Any] | None) -> dict[str, Any]:
         body = None if payload is None else json.dumps(payload).encode("utf-8")
@@ -369,3 +222,4 @@ class TinyFishClient:
             sort_keys=True,
             default=str,
         )
+

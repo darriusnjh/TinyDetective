@@ -91,8 +91,8 @@ class TinyFishComparisonSiteAdapter:
             f"size={source_product.size!r}, material={source_product.material!r}, model={source_product.model!r}, "
             f"sku={source_product.sku!r}, features={source_product.features!r}. "
             "Return valid JSON only with this exact shape: "
-            '{"candidates":[{"product_url":"","marketplace":"","seller_name":"","title":"","price":0,'
-            '"currency":"","brand":"","color":"","size":"","material":"","model":"","sku":"",'
+            '{"candidates":[{"product_url":"","marketplace":"","seller_name":"","seller_store_url":"",'
+            '"seller_id":"","title":"","price":0,"currency":"","brand":"","color":"","size":"","material":"","model":"","sku":"",'
             '"description":"","image_urls":[]}]} '
             "Only include real listing URLs found on this site. Do not fabricate listings."
         )
@@ -134,7 +134,7 @@ class TinyFishComparisonSiteAdapter:
         return (
             "Visit this product listing page and extract structured product data for counterfeit research. "
             "Return valid JSON only with this exact shape: "
-            '{"seller_name":"","title":"","price":0,"currency":"","brand":"","color":"","size":"",'
+            '{"seller_name":"","seller_store_url":"","seller_id":"","title":"","price":0,"currency":"","brand":"","color":"","size":"",'
             '"material":"","model":"","sku":"","description":"","image_urls":[]} '
             "Use null for unknown scalar values and [] for unknown lists. Do not invent values."
         )
@@ -162,7 +162,6 @@ class TinyFishComparisonSiteAdapter:
             "tinyfish_run_id": run.run_id,
             "tinyfish_status": run.status,
             "tinyfish_result": run.result,
-            "tinyfish_streaming_url": run.streaming_url,
             "tinyfish_elapsed_seconds": run.elapsed_seconds,
             "tinyfish_delayed": run.delayed,
             "tinyfish_last_heartbeat_at": run.last_heartbeat_at.isoformat() if run.last_heartbeat_at else None,
