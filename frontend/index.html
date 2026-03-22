@@ -22,7 +22,20 @@
       <section class="scene prompt-scene" id="prompt-scene" data-scene="prompt">
         <div class="scene-inner prompt-inner">
           <header class="prompt-header">
-            <h1>TinyDetective</h1>
+            <div class="prompt-brand">
+              <span class="prompt-brand-mark" aria-hidden="true">
+                <img
+                  class="prompt-brand-logo"
+                  src="/static/tinydetective.png"
+                  alt=""
+                  width="736"
+                  height="736"
+                />
+              </span>
+              <div class="prompt-brand-copy">
+                <h1>TinyDetective</h1>
+              </div>
+            </div>
             <p class="eyebrow">Counterfeit Research Console</p>
           </header>
 
@@ -36,10 +49,50 @@
                 placeholder="What product would you like to protect today?"
               ></textarea>
 
-              <div class="composer-footer">
-                <p class="config-note sr-only" id="config-note"></p>
-                <button type="submit" id="run-button">Investigate</button>
-              </div>
+	              <div class="composer-footer">
+	                <p class="config-note sr-only" id="config-note"></p>
+	                <div class="composer-archives">
+	                  <div class="composer-history">
+	                    <button
+	                      type="button"
+	                      class="panel-action composer-secondary-action"
+	                      id="history-button"
+	                      aria-expanded="false"
+	                      aria-haspopup="true"
+	                      aria-controls="past-runs"
+	                    >
+	                      Saved runs
+	                    </button>
+	                    <div class="history-dropdown" id="history-dropdown" hidden>
+	                      <div class="history-dropdown-header">
+	                        <p class="section-label">Archive</p>
+	                        <span class="history-dropdown-caption">Reopen a saved investigation</span>
+	                      </div>
+	                      <div class="past-runs-list" id="past-runs" aria-live="polite"></div>
+	                    </div>
+	                  </div>
+	                  <div class="composer-history">
+	                    <button
+	                      type="button"
+	                      class="panel-action composer-secondary-action"
+	                      id="case-history-button"
+	                      aria-expanded="false"
+	                      aria-haspopup="true"
+	                      aria-controls="past-cases"
+	                    >
+	                      Saved cases
+	                    </button>
+	                    <div class="history-dropdown history-dropdown--cases" id="case-history-dropdown" hidden>
+	                      <div class="history-dropdown-header">
+	                        <p class="section-label">Seller Cases</p>
+	                        <span class="history-dropdown-caption">Reopen a saved seller enforcement case</span>
+	                      </div>
+	                      <div class="past-runs-list" id="past-cases" aria-live="polite"></div>
+	                    </div>
+	                  </div>
+	                </div>
+	                <button type="submit" id="run-button">Investigate</button>
+	              </div>
             </div>
 
             <textarea id="comparison-sites" hidden aria-hidden="true"></textarea>
@@ -90,7 +143,12 @@
                 <p class="section-label">Workflow</p>
                 <h2>Agent Progress</h2>
               </div>
-              <div class="status-pill" id="status-pill" aria-live="polite">Idle</div>
+              <div class="report-actions">
+                <button type="button" class="panel-action" id="new-investigation-button">
+                  New investigation
+                </button>
+                <div class="status-pill" id="status-pill" aria-live="polite">Idle</div>
+              </div>
             </div>
 
             <div class="progress-overview">
@@ -231,7 +289,7 @@
                         <span class="timeline-step-state">Pending</span>
                       </div>
                       <p class="timeline-step-note" id="timeline-candidates-note">
-                        Candidate listings will stream in as search results are captured.
+                        Candidate listings will stream in, then be triaged before deep extraction starts.
                       </p>
                       <div class="candidate-stream" id="timeline-candidate-stream" aria-live="polite"></div>
                     </div>
@@ -290,11 +348,6 @@
               Waiting for an investigation to start.
             </p>
           </section>
-
-          <section class="past-runs-panel" hidden>
-            <div class="past-runs-list" id="past-runs" aria-live="polite"></div>
-          </section>
-
           <section class="results-panel" hidden>
             <div id="results" aria-live="polite"></div>
           </section>
@@ -334,6 +387,102 @@
           </section>
         </div>
       </section>
+
+      <section class="scene case-scene" id="case-scene" data-scene="case">
+        <div class="scene-inner case-inner">
+          <section class="panel case-panel">
+            <div class="panel-header report-header">
+              <div>
+                <p class="section-label">Seller Case</p>
+                <h2 id="case-title">Seller Enforcement Case</h2>
+                <p class="case-subtitle" id="case-subtitle">
+                  Select a suspicious seller from the investigation results to build a case.
+                </p>
+              </div>
+              <div class="report-actions">
+                <button type="button" class="panel-action" id="case-generate-report-button" disabled>
+                  Generate report
+                </button>
+                <button type="button" class="panel-action" id="case-back-button">Back to investigation</button>
+              </div>
+            </div>
+
+            <div class="case-overview">
+              <div class="status-pill" id="case-status-pill">Idle</div>
+              <div class="case-progress-copy">
+                <p class="progress-overview-text" id="case-progress-text">
+                  No seller case has been started yet.
+                </p>
+                <div
+                  class="progress-track"
+                  id="case-progress-track"
+                  role="progressbar"
+                  aria-label="Seller case progress"
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                  aria-valuenow="0"
+                >
+                  <div class="progress-fill" id="case-progress-fill"></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="case-grid">
+              <article class="case-section case-section--profile">
+                <div class="case-section-header">
+                  <p class="timeline-kicker">Storefront</p>
+                  <h3>Seller Profile</h3>
+                </div>
+                <div class="case-profile-summary" id="case-profile-summary"></div>
+              </article>
+
+              <article class="case-section case-section--seed">
+                <div class="case-section-header">
+                  <p class="timeline-kicker">Seed Listing</p>
+                  <h3>Selected Listing</h3>
+                </div>
+                <div class="case-seed-summary" id="case-seed-summary"></div>
+              </article>
+
+              <article class="case-section case-section--listings">
+                <div class="case-section-header">
+                  <p class="timeline-kicker">Inventory</p>
+                  <h3>Suspicious Seller Listings</h3>
+                </div>
+                <div class="case-suspect-listings" id="case-suspect-listings"></div>
+              </article>
+
+              <article class="case-section case-section--evidence">
+                <div class="case-section-header">
+                  <p class="timeline-kicker">Evidence</p>
+                  <h3>Case Evidence</h3>
+                </div>
+                <div class="case-evidence-grid" id="case-evidence-grid"></div>
+              </article>
+
+              <article class="case-section case-section--draft">
+                <div class="case-section-header">
+                  <p class="timeline-kicker">Action Draft</p>
+                  <h3>Marketplace Request</h3>
+                </div>
+                <div class="case-draft" id="case-draft"></div>
+              </article>
+
+              <article class="case-section case-section--activity">
+                <div class="case-section-header">
+                  <p class="timeline-kicker">Activity</p>
+                  <h3>Agent Activity</h3>
+                </div>
+                <div class="case-activity-log" id="case-activity-log"></div>
+                <details class="agent-log">
+                  <summary>Raw task log</summary>
+                  <div class="agent-log-content" id="case-agent-log"></div>
+                </details>
+              </article>
+            </div>
+          </section>
+        </div>
+      </section>
     </main>
 
     <template id="report-template">
@@ -354,6 +503,9 @@
         <div class="score-grid"></div>
         <p class="reason"></p>
         <div class="signals"></div>
+        <div class="match-actions">
+          <button type="button" class="case-action" data-build-case>Build Seller Case</button>
+        </div>
         <details>
           <summary>Evidence</summary>
           <div class="evidence-list"></div>

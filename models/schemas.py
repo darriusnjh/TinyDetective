@@ -55,6 +55,8 @@ class CandidateProduct(BaseModel):
     marketplace: str
     discovery_queries: list[str] = Field(default_factory=list)
     seller_name: str | None = None
+    seller_store_url: HttpUrl | str | None = None
+    seller_id: str | None = None
     title: str | None = None
     price: float | None = None
     currency: str | None = None
@@ -66,6 +68,26 @@ class CandidateProduct(BaseModel):
     sku: str | None = None
     description: str | None = None
     image_urls: list[str] = Field(default_factory=list)
+
+
+class CandidateTriageAssessment(BaseModel):
+    source_url: HttpUrl | str
+    product_url: HttpUrl | str
+    investigation_priority_score: float
+    suspicion_score: float
+    should_shortlist: bool
+    rationale: str
+    suspicious_signals: list[str] = Field(default_factory=list)
+
+
+class ComparisonReasoningEnrichment(BaseModel):
+    source_url: HttpUrl | str
+    product_url: HttpUrl | str
+    enriched_reason: str
+    reasoning_notes: list[str] = Field(default_factory=list)
+    additional_suspicious_signals: list[str] = Field(default_factory=list)
+    risk_adjustment: float = 0.0
+    match_adjustment: float = 0.0
 
 
 class EvidenceItem(BaseModel):
@@ -89,6 +111,14 @@ class ComparisonResult(BaseModel):
     counterfeit_risk_score: float
     suspicious_signals: list[str] = Field(default_factory=list)
     reason: str
+    reasoning_notes: list[str] = Field(default_factory=list)
+    reasoning_enrichment_source: str | None = None
+    comparison_basis_source_url: HttpUrl | str | None = None
+    comparison_basis_label: str | None = None
+    comparison_basis_reason: str | None = None
+    comparison_basis_confidence: float = 0.0
+    triage_priority_score: float = 0.0
+    triage_suspicion_score: float = 0.0
     evidence: list[EvidenceItem] = Field(default_factory=list)
     candidate_product: CandidateProduct
 
@@ -131,6 +161,7 @@ class InvestigationCreateRequest(BaseModel):
     source_urls: list[HttpUrl | str]
     comparison_sites: list[HttpUrl | str] = Field(default_factory=list)
     max_candidates_per_site: int = Field(default=5, ge=1, le=10)
+    max_shortlisted_candidates: int = Field(default=6, ge=1, le=20)
 
 
 class InvestigationResponse(BaseModel):
@@ -147,6 +178,7 @@ class InvestigationListItem(BaseModel):
     investigation_id: str
     status: InvestigationStatus
     primary_source_url: str | None = None
+    primary_source_title: str | None = None
     source_count: int = 0
     error: str | None = None
     created_at: datetime

@@ -91,8 +91,8 @@ class TinyFishComparisonSiteAdapter:
             f"size={source_product.size!r}, material={source_product.material!r}, model={source_product.model!r}, "
             f"sku={source_product.sku!r}, features={source_product.features!r}. "
             "Return valid JSON only with this exact shape: "
-            '{"candidates":[{"product_url":"","marketplace":"","seller_name":"","title":"","price":0,'
-            '"currency":"","brand":"","color":"","size":"","material":"","model":"","sku":"",'
+            '{"candidates":[{"product_url":"","marketplace":"","seller_name":"","seller_store_url":"",'
+            '"seller_id":"","title":"","price":0,"currency":"","brand":"","color":"","size":"","material":"","model":"","sku":"",'
             '"description":"","image_urls":[]}]} '
             "Only include real listing URLs found on this site. Do not fabricate listings."
         )
@@ -134,7 +134,7 @@ class TinyFishComparisonSiteAdapter:
         return (
             "Visit this product listing page and extract structured product data for counterfeit research. "
             "Return valid JSON only with this exact shape: "
-            '{"seller_name":"","title":"","price":0,"currency":"","brand":"","color":"","size":"",'
+            '{"seller_name":"","seller_store_url":"","seller_id":"","title":"","price":0,"currency":"","brand":"","color":"","size":"",'
             '"material":"","model":"","sku":"","description":"","image_urls":[]} '
             "Use null for unknown scalar values and [] for unknown lists. Do not invent values."
         )
