@@ -450,7 +450,20 @@ class InvestigationOrchestrator:
 
         candidates_by_url: dict[str, CandidateProduct] = {}
         pending_queries: list[tuple[AgentTaskState, str, str, bool]] = []
-        search_queries = self.discovery_agent.build_search_queries(source_product)
+        build_search_queries = getattr(self.discovery_agent, "build_search_queries", None)
+        if callable(build_search_queries):
+            search_queries = build_search_queries(source_product)
+        else:
+            search_queries = [
+                value
+                for value in (
+                    source_product.product_name,
+                    source_product.model,
+                    source_product.brand,
+                    str(source_product.source_url),
+                )
+                if value
+            ][:1]
 
         for comparison_site in comparison_sites:
             for search_query in search_queries:
@@ -503,45 +516,53 @@ class InvestigationOrchestrator:
             search_query: str,
             should_resume: bool,
         ) -> tuple[AgentTaskState, str, str, list[CandidateProduct], dict[str, Any]]:
+            update_callback = lambda run: self._apply_task_update(
+                investigation,
+                report_index,
+                report,
+                task_log,
+                discovery_task,
+                run,
+                search_summary,
+                "Searching marketplace targets. TinyFish is still actively working through the queries.",
+            )
             if should_resume:
+                resume_for_site = self.discovery_agent.resume_for_site
+                resume_kwargs: dict[str, Any] = {
+                    "search_query": search_query,
+                    "top_n": max_candidates_per_site,
+                    "started_at": discovery_task.started_at,
+                    "last_progress_at": discovery_task.last_progress_at,
+                    "on_update": update_callback,
+                }
+                resume_params = inspect.signature(resume_for_site).parameters
+                resume_kwargs = {
+                    key: value for key, value in resume_kwargs.items() if key in resume_params
+                }
                 site_candidates, discovery_raw_output = await self.runtime.run_agent(
-                    lambda: self.discovery_agent.resume_for_site(
+                    lambda: resume_for_site(
                         source_product,
                         comparison_site,
                         discovery_task.provider_run_id or "",
-                        search_query=search_query,
-                        top_n=max_candidates_per_site,
-                        started_at=discovery_task.started_at,
-                        last_progress_at=discovery_task.last_progress_at,
-                        on_update=lambda run: self._apply_task_update(
-                            investigation,
-                            report_index,
-                            report,
-                            task_log,
-                            discovery_task,
-                            run,
-                            search_summary,
-                            "Searching marketplace targets. TinyFish is still actively working through the queries.",
-                        ),
+                        **resume_kwargs,
                     )
                 )
             else:
+                run_for_site = self.discovery_agent.run_for_site
+                run_kwargs: dict[str, Any] = {
+                    "search_query": search_query,
+                    "top_n": max_candidates_per_site,
+                    "on_update": update_callback,
+                }
+                run_params = inspect.signature(run_for_site).parameters
+                run_kwargs = {
+                    key: value for key, value in run_kwargs.items() if key in run_params
+                }
                 site_candidates, discovery_raw_output = await self.runtime.run_agent(
-                    lambda: self.discovery_agent.run_for_site(
+                    lambda: run_for_site(
                         source_product,
                         comparison_site,
-                        search_query=search_query,
-                        top_n=max_candidates_per_site,
-                        on_update=lambda run: self._apply_task_update(
-                            investigation,
-                            report_index,
-                            report,
-                            task_log,
-                            discovery_task,
-                            run,
-                            search_summary,
-                            "Searching marketplace targets. TinyFish is still actively working through the queries.",
-                        ),
+                        **run_kwargs,
                     )
                 )
             return discovery_task, comparison_site, search_query, site_candidates, discovery_raw_output
@@ -1022,11 +1043,14 @@ class InvestigationOrchestrator:
         report.error = None
         investigation.status = InvestigationStatus.running
         await self._save_report_progress(investigation, report_index, report)
+        summary_run_kwargs: dict[str, Any] = {}
+        if "excluded_official_store_count" in inspect.signature(self.summary_agent.run).parameters:
+            summary_run_kwargs["excluded_official_store_count"] = excluded_official_store_count
         summary = await self.runtime.run_agent(
             lambda: self.summary_agent.run(
                 source_product,
                 top_matches,
-                excluded_official_store_count=excluded_official_store_count,
+                **summary_run_kwargs,
             )
         )
         summary_task.status = TaskStatus.completed

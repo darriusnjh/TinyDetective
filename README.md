@@ -32,6 +32,14 @@ uv sync --dev
 uv run python -m backend
 ```
 
+For demo replay mode, start the backend with:
+
+```bash
+uv run python -m backend --demo
+```
+
+In demo mode, submitting a product URL replays the latest completed saved investigation with the same source URL from SQLite instead of starting a live TinyFish run.
+
 You can also run the backend entry file directly:
 
 ```bash

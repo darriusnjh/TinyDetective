@@ -254,6 +254,11 @@ textarea:focus {
   line-height: 1.65;
 }
 
+textarea:disabled {
+  color: color-mix(in oklch, var(--muted) 82%, var(--ink) 18%);
+  cursor: not-allowed;
+}
+
 textarea::placeholder {
   color: color-mix(in oklch, var(--muted) 84%, white 16%);
 }
@@ -2082,6 +2087,10 @@ code {
   .candidate-stream,
   .meta-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .composer-footer {
+    flex-wrap: wrap;
   }
 
   .ranking-item {

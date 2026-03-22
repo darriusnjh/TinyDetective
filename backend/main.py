@@ -22,7 +22,11 @@ from models.case_schemas import (
     SellerCaseListItem,
     SellerCaseResponse,
 )
-from models.schemas import InvestigationCreateRequest, InvestigationListItem, InvestigationResponse
+from models.schemas import (
+    InvestigationCreateRequest,
+    InvestigationListItem,
+    InvestigationResponse,
+)
 from services.demo_replay_service import DemoReplayService, DemoSellerCaseReplayService
 from services.investigation_orchestrator import InvestigationOrchestrator
 from services.investigation_store import InvestigationStore
@@ -97,7 +101,6 @@ async def health() -> dict[str, str]:
 @app.get("/config")
 async def config() -> dict[str, object]:
     return {
-        "demo_mode": settings.demo_mode,
         "brand_landing_page_url": settings.brand_landing_page_url,
         "ecommerce_store_urls": settings.ecommerce_store_urls,
         "tinyfish_browser_profile": settings.tinyfish_browser_profile,
@@ -106,6 +109,8 @@ async def config() -> dict[str, object]:
         "openai_reasoning_model": settings.openai_reasoning_model,
         "openai_shortlist_limit": settings.openai_shortlist_limit,
         "log_path": str(LOG_PATH),
+        "demo_mode": settings.demo_mode,
+        "demo_replay_step_delay_seconds": settings.demo_replay_step_delay_seconds,
     }
 
 
@@ -136,6 +141,7 @@ async def get_investigation(investigation_id: str) -> InvestigationResponse:
         demo_investigation = await demo_replay_service.get(investigation_id)
         if demo_investigation is not None:
             return demo_investigation
+
     investigation = await store.get(investigation_id)
     if investigation is None:
         raise HTTPException(status_code=404, detail="Investigation not found")
@@ -172,6 +178,7 @@ async def get_case(case_id: str) -> SellerCaseResponse:
         demo_case = await demo_seller_case_replay_service.get(case_id)
         if demo_case is not None:
             return demo_case
+
     seller_case = await store.get_case(case_id)
     if seller_case is None:
         raise HTTPException(status_code=404, detail="Seller case not found")

@@ -3453,13 +3453,19 @@ form.addEventListener("submit", async (event) => {
     progressStepDefinitions.map((step, index) => [step.key, index === 0 ? "queued" : "pending"])
   );
   updateProgressUI({
-    overview: "Submitting investigation request",
-    detail: "Creating the investigation and preparing live progress updates.",
+    overview: appConfig?.demo_mode ? "Preparing demo replay" : "Submitting investigation request",
+    detail: appConfig?.demo_mode
+      ? "Matching the submitted product URL against saved runs and staging the replay."
+      : "Creating the investigation and preparing live progress updates.",
     percent: 4,
     stepStates: queuedStepStates,
   });
   renderTimeline(null);
-  renderEmptyState("Starting a live investigation and preparing the first result set.");
+  renderEmptyState(
+    appConfig?.demo_mode
+      ? "Preparing the saved investigation and starting the demo replay."
+      : "Starting a live investigation and preparing the first result set."
+  );
   setSubmitting(true);
 
   try {
@@ -3469,7 +3475,7 @@ form.addEventListener("submit", async (event) => {
       body: JSON.stringify({ source_urls, comparison_sites }),
     });
     if (!response.ok) {
-      throw new Error("Unable to start the investigation.");
+      throw new Error(appConfig?.demo_mode ? "Unable to start the demo replay." : "Unable to start the investigation.");
     }
 
     const payload = await response.json();
@@ -3479,13 +3485,17 @@ form.addEventListener("submit", async (event) => {
     setStatus("failed");
     const stepStates = Object.fromEntries(progressStepDefinitions.map((step) => [step.key, "failed"]));
     updateProgressUI({
-      overview: "Investigation failed to start",
+      overview: appConfig?.demo_mode ? "Demo replay failed to start" : "Investigation failed to start",
       detail: error.message,
       percent: 0,
       stepStates,
     });
     renderTimeline(null);
-    renderEmptyState("The investigation could not be started. Check the backend and try again.");
+    renderEmptyState(
+      appConfig?.demo_mode
+        ? "The demo replay could not be started. Check the saved run and backend."
+        : "The investigation could not be started. Check the backend and try again."
+    );
   } finally {
     setSubmitting(false);
   }
@@ -3731,7 +3741,9 @@ fetch("/config")
     const lines = [];
     if (config.demo_mode) {
       lines.push(
-        "Demo mode: submitted product URLs and Build Seller Case replay matching completed saved runs and seller cases."
+        `Demo mode: submitted product URLs and Build Seller Case replay matching completed saved runs and seller cases with a ${Math.round(
+          Number(config.demo_replay_step_delay_seconds || 0)
+        )}s stage delay.`
       );
     }
     if (config.brand_landing_page_url) {

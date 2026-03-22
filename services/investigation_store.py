@@ -508,4 +508,3 @@ class InvestigationStore:
                 source_url,
                 product_url,
             )
-
