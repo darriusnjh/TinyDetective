@@ -5,11 +5,19 @@ from __future__ import annotations
 import asyncio
 
 from agents.candidate_discovery_agent import CandidateDiscoveryAgent
+from agents.candidate_triage_agent import CandidateTriageAgent
 from agents.evidence_agent import EvidenceAgent
 from agents.product_comparison_agent import ProductComparisonAgent
+from agents.reasoning_enrichment_agent import ReasoningEnrichmentAgent
 from agents.ranking_agent import RankingAgent
 from agents.research_summary_agent import ResearchSummaryAgent
-from models.schemas import CandidateProduct, ComparisonResult, SourceProduct
+from models.schemas import (
+    CandidateProduct,
+    ComparisonReasoningEnrichment,
+    ComparisonResult,
+    SourceProduct,
+)
+from services.settings import settings
 
 
 class StubComparisonAdapter:
@@ -80,6 +88,18 @@ class SearchCaptureAdapter:
             discovery_queries=[search_query],
         )
         return [candidate], {"tinyfish_run_id": "stub-run", "tinyfish_status": "COMPLETED"}
+
+
+class StubOpenAIClient:
+    async def run_json(self, **kwargs):
+        del kwargs
+        return {
+            "enriched_reason": "OpenAI found stronger suspicious overlap than the deterministic summary captured.",
+            "reasoning_notes": ["Description overlap reinforces counterfeit concern."],
+            "additional_suspicious_signals": ["description_semantic_overlap"],
+            "risk_adjustment": 0.07,
+            "match_adjustment": 0.03,
+        }
 
 
 def test_product_comparison_agent_flags_low_priced_copy() -> None:
@@ -208,6 +228,75 @@ def test_candidate_discovery_agent_builds_semantic_brand_led_queries() -> None:
         assert len(raw_outputs) == len(queries)
         assert len(candidates) == len(queries)
         assert all(candidate.discovery_queries for candidate in candidates)
+
+    asyncio.run(run())
+
+
+def test_candidate_triage_agent_heuristic_shortlists_relevant_discount_listing() -> None:
+    async def run() -> None:
+        source_product = SourceProduct(
+            source_url="https://brand.example/products/alpha-case",
+            brand="Brand",
+            product_name="Alpha Case",
+            category="Accessories",
+            subcategory="Phone Case",
+            price=100.0,
+            currency="SGD",
+        )
+        candidate = CandidateProduct(
+            product_url="https://market.example/listing/alpha-case-discount",
+            marketplace="Market",
+            seller_name="Discount Hub",
+            title="Brand Alpha Case",
+            price=55.0,
+            currency="SGD",
+            brand="Brand",
+            discovery_queries=["brand alpha case"],
+        )
+        assessment = await CandidateTriageAgent().run(source_product, candidate)
+        assert assessment.should_shortlist is True
+        assert assessment.investigation_priority_score >= 0.34
+        assert assessment.suspicion_score >= 0.32
+
+    asyncio.run(run())
+
+
+def test_reasoning_enrichment_agent_applies_bounded_adjustments() -> None:
+    async def run() -> None:
+        original_api_key = settings.openai_api_key
+        object.__setattr__(settings, "openai_api_key", "test-key")
+        try:
+            source_product = SourceProduct(
+                source_url="https://brand.example/products/alpha-case",
+                brand="Brand",
+                product_name="Alpha Case",
+                description="Protective phone case",
+            )
+            comparison = ComparisonResult(
+                source_url=source_product.source_url,
+                product_url="https://market.example/listing/alpha-case",
+                marketplace="Market",
+                match_score=0.52,
+                is_exact_match=False,
+                counterfeit_risk_score=0.58,
+                suspicious_signals=["suspiciously_low_price"],
+                reason="Deterministic baseline reason.",
+                candidate_product=CandidateProduct(
+                    product_url="https://market.example/listing/alpha-case",
+                    marketplace="Market",
+                    description="Protective phone case compatible version",
+                ),
+            )
+            agent = ReasoningEnrichmentAgent(client=StubOpenAIClient())
+            enrichment = await agent.run(source_product, comparison)
+            assert isinstance(enrichment, ComparisonReasoningEnrichment)
+            enriched = agent.apply(comparison, enrichment)
+            assert enriched.reason.startswith("OpenAI found stronger suspicious overlap")
+            assert "description_semantic_overlap" in enriched.suspicious_signals
+            assert enriched.counterfeit_risk_score == 0.65
+            assert enriched.match_score == 0.55
+        finally:
+            object.__setattr__(settings, "openai_api_key", original_api_key)
 
     asyncio.run(run())
 
